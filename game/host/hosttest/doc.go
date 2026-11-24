@@ -17,8 +17,11 @@
 // file page has an opaque origin, so the Origin header proves nothing.
 //
 // One page may connect. It sends hello with the token within the handshake
-// timeout (5 seconds unless Options changes it). A second page, a wrong token
-// and a message above 64 KiB are refused. When the page's connection ends the
+// timeout (60 seconds unless Options changes it: a page on a loaded machine
+// can take many seconds to reach its hello, and the page retries a socket that
+// closes before it is ready). A socket that sends no valid hello in time is
+// closed and forgotten, and a later socket may still join. A second page after
+// one has joined, a wrong token and a message above 64 KiB are refused. When the page's connection ends the
 // Server shuts down; a Server serves one page for one run.
 //
 // The page applies pad changes at engine-frame boundaries. A change received
@@ -53,6 +56,9 @@
 // names the last frame, the sent and applied sequence numbers and the state of
 // the connection. When the page's connection ends, every pending operation
 // fails with ErrPageGone.
+//
+// Pad returns a copy of the state the server last sent for one pad, and
+// whether that pad is plugged in, so a test need not keep its own copy.
 //
 // If a context ends before a change is acknowledged, the change may still
 // land later. The Server then keeps the pad state it sent as the state to edit

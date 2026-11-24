@@ -132,7 +132,12 @@ func eval(t *testing.T, ctx context.Context, js string) string {
 
 func waitEval(t *testing.T, ctx context.Context, what, js, want string) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	waitEvalFor(t, ctx, 20*time.Second, what, js, want)
+}
+
+func waitEvalFor(t *testing.T, ctx context.Context, limit time.Duration, what, js, want string) {
+	t.Helper()
+	deadline := time.Now().Add(limit)
 	var got string
 	for time.Now().Before(deadline) {
 		got = eval(t, ctx, js)
@@ -248,11 +253,56 @@ func TestChromeTaggedBuildFailsVisibly(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := openPage(t, u)
-			waitEval(t, ctx, name, statusJS, "failed")
+			// With no server at all the page keeps trying for its whole
+			// 60 s join window before it says "failed"; a bad value fails
+			// at once.
+			limit := 20 * time.Second
+			if name == "unreachable endpoint" {
+				limit = 75 * time.Second
+			}
+			waitEvalFor(t, ctx, limit, name, statusJS, "failed")
 			waitEval(t, ctx, "page runs", `(Number(document.documentElement.getAttribute("data-frames")) > 5) ? "yes" : "no"`, "yes")
 			if got := eval(t, ctx, titleJS); !strings.HasPrefix(got, "pads=[] held=[]") {
 				t.Fatalf("a failed page exposed pads: %q", got)
 			}
 		})
+	}
+}
+
+// The server drops the first socket after a valid hello, with no answer. The
+// page opens a second one, reaches ready, and a press sent by the test reaches
+// the game.
+func TestChromePageJoinsAfterItsFirstSocketIsDropped(t *testing.T) {
+	page := buildPadPage(t, "gosx_padtest")
+	srv, err := StartWith(context.Background(), Options{dropFirstHello: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	ctx := openPage(t, srv.PageURL(fileURL(page)))
+	rc, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.WaitReady(rc); err != nil {
+		t.Fatalf("WaitReady: %v (page status %q)", err, eval(t, ctx, statusJS))
+	}
+	srv.mu.Lock()
+	dropped := srv.dropped
+	srv.mu.Unlock()
+	if !dropped {
+		t.Fatal("the server never dropped a socket: the test proved nothing")
+	}
+	if got := eval(t, ctx, statusJS); got != "ready" {
+		t.Fatalf("data-padtest %q, want ready", got)
+	}
+	run, cancelRun := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelRun()
+	if _, err := srv.Plug(run, 0, "Stub A (STANDARD GAMEPAD)", "standard"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Press(run, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := eval(t, ctx, titleJS); !strings.Contains(got, "held=[pad:0/button0]") {
+		t.Fatalf("after Press the page saw %q", got)
 	}
 }

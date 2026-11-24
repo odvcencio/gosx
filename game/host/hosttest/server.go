@@ -76,11 +76,19 @@ type Receipt struct {
 // Options tunes Start. Zero values select the defaults.
 type Options struct {
 	// HelloTimeout is how long a new connection has to send a valid hello.
-	// Default 5 seconds.
+	// Default 60 seconds: a page on a loaded machine can take many seconds
+	// to reach the point where it says hello.
 	HelloTimeout time.Duration
 	// MaxMessage is the largest message accepted. Default host.PadTestMaxMessage.
 	MaxMessage int64
+
+	// dropFirstHello makes the server close the first valid connection
+	// without answering its hello, to test the page's retry.
+	dropFirstHello bool
 }
+
+// defaultHelloTimeout is the hello timeout Options uses when it sets none.
+const defaultHelloTimeout = 60 * time.Second
 
 const maxUnauthenticated = 8
 
@@ -101,6 +109,7 @@ type Server struct {
 	mu       sync.Mutex
 	unauth   int
 	claimed  bool
+	dropped  bool // dropFirstHello has run
 	conn     *websocket.Conn
 	done     chan struct{}
 	doneErr  error
@@ -141,7 +150,7 @@ func Start(ctx context.Context) (*Server, error) { return StartWith(ctx, Options
 // StartWith is Start with Options.
 func StartWith(ctx context.Context, opts Options) (*Server, error) {
 	if opts.HelloTimeout <= 0 {
-		opts.HelloTimeout = 5 * time.Second
+		opts.HelloTimeout = defaultHelloTimeout
 	}
 	if opts.MaxMessage <= 0 {
 		opts.MaxMessage = host.PadTestMaxMessage
@@ -254,6 +263,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if s.claimed || s.isDoneLocked() {
 		s.mu.Unlock()
 		refuse(websocket.ClosePolicyViolation, "page already connected")
+		return
+	}
+	if s.opts.dropFirstHello && !s.dropped {
+		s.dropped = true
+		s.mu.Unlock()
+		conn.Close()
 		return
 	}
 	s.claimed = true
@@ -618,6 +633,21 @@ func (s *Server) SetAt(ctx context.Context, frame uint64, pads []host.GamepadSta
 		return r, s.wrap("set at", fmt.Errorf("%w: wanted frame %d, first read at frame %d", ErrFrameNotSampled, frame, r.Frame))
 	}
 	return r, err
+}
+
+// Pad returns a copy of the state the server last sent for pad index, and
+// whether that pad is plugged in. A change that no receipt has confirmed yet
+// counts as sent.
+func (s *Server) Pad(index int) (host.GamepadState, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.desired[index]
+	if !ok {
+		return host.GamepadState{}, false
+	}
+	st.Buttons = append([]float64(nil), st.Buttons...)
+	st.Axes = append([]float64(nil), st.Axes...)
+	return st, true
 }
 
 // Frames returns the last reported count of completed frames. It can lag; use

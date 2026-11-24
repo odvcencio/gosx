@@ -557,3 +557,68 @@ func Example() {
 	fmt.Println(strings.HasPrefix(page.RawQuery, "gosx-padtest="))
 	// Output: true
 }
+
+func TestDefaultHelloTimeoutCoversABusyPage(t *testing.T) {
+	srv := startServer(t)
+	c := rawDial(t, srv)
+	time.Sleep(6 * time.Second) // a busy page's main thread may hold its hello this long
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	sendMsg(t, c, host.PadMessage{Type: host.PadMsgHello, Version: host.PadTestProtocolVersion, Token: srv.token})
+	_, data, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("the server gave up on a hello that came after 6 s: %v", err)
+	}
+	m, err := host.DecodePadMessage(data)
+	if err != nil || m.Type != host.PadMsgReady {
+		t.Fatalf("answer %+v, %v; want ready", m, err)
+	}
+}
+
+func TestASecondSocketJoinsAfterTheFirstTimesOut(t *testing.T) {
+	srv, err := StartWith(context.Background(), Options{HelloTimeout: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+	first := rawDial(t, srv)
+	if _, _, err := first.ReadMessage(); err == nil {
+		t.Fatal("the silent first socket stayed open")
+	}
+	second := rawDial(t, srv)
+	sendMsg(t, second, host.PadMessage{Type: host.PadMsgHello, Version: host.PadTestProtocolVersion, Token: srv.token})
+	_, data, err := second.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := host.DecodePadMessage(data); err != nil || m.Type != host.PadMsgReady {
+		t.Fatalf("answer %+v, %v; want ready", m, err)
+	}
+}
+
+func TestPadReturnsWhatWasLastSent(t *testing.T) {
+	srv := startServer(t)
+	p := readyPage(t, srv)
+	p.run()
+	ctx := ctxFor(t)
+	if _, ok := srv.Pad(0); ok {
+		t.Fatal("Pad(0) reported a pad before any was plugged")
+	}
+	must(t)(srv.Plug(ctx, 0, host.DefaultPadTestID, "standard"))
+	must(t)(srv.Press(ctx, 0, 3))
+	must(t)(srv.Axis(ctx, 0, 1, -0.5))
+	got, ok := srv.Pad(0)
+	if !ok || got.Index != 0 || got.Buttons[3] != 1 || got.Axes[1] != -0.5 {
+		t.Fatalf("Pad(0) = %+v, %v", got, ok)
+	}
+	got.Buttons[3] = 0 // the copy is the caller's: the server's state must not change
+	if again, _ := srv.Pad(0); again.Buttons[3] != 1 {
+		t.Fatal("Pad returned a slice that aliases the server's state")
+	}
+	if _, ok := srv.Pad(1); ok {
+		t.Fatal("Pad(1) reported a pad that was never plugged")
+	}
+	must(t)(srv.Unplug(ctx, 0))
+	if _, ok := srv.Pad(0); ok {
+		t.Fatal("Pad(0) still reports an unplugged pad")
+	}
+}
