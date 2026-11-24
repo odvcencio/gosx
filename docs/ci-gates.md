@@ -13,7 +13,10 @@ Run a gate locally with `make <target>`. Between them the gates need TinyGo,
 Binaryen, Chrome, Node, `jq`, `curl`, `python3` and `openssl`. The size gates
 (`wasm-size-budget`, `wire-gate`) can also fail on your machine only because
 your Go patch version differs from the one CI uses; compare against the CI
-version before you chase the number.
+version before you chase the number. A page's compressed HTML also moves by a
+few bytes whenever the content-hashed chunk URLs in it change, so a hand-raised
+`htmlWireBytes` limit in `perf/budgets/wire.json` is the hosted measurement
+plus 32 B, with the measurement and the run recorded in the route's `raise` note.
 
 | Job (`.github/workflows/ci.yml`) | Make targets | What it proves |
 |---|---|---|
