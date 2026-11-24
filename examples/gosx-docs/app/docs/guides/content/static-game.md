@@ -32,6 +32,7 @@ files, unless you pass `--precompressed=false`.
 | `--out=<dir>` | Also writes the static bundle to `<dir>`. A relative path is relative to the current directory. The folder is created. It must be missing, empty, or a previous export (it has an `index.html`); a previous export's files are replaced, not merged. A folder that is not empty and has no `index.html`, one that holds a `go.mod`, the project folder or a parent of it, and `dist/static` are refused, before the build starts. The last line reads `gosx export: static bundle in <dir>`. |
 | `--precompressed=false` | Leaves the `.gz` and `.br` copies out of the exported folder: `<dir>` with `--out`, else `dist/static`. Use it for a host that rejects them. Only a `.gz` or `.br` file that sits beside its original is dropped, so an app's own `data.gz` stays. Default `true`. |
 | `--single-file[=path]` | Also writes the bundle as one HTML file. Default path `dist/static.html`. A relative path is relative to the current directory. |
+| `--go-tags=a,b` | Builds the project's `build.goWASM` entries with these Go build tags (letters, digits, underscore). The runtime and the server build do not get them. The build summary lists them. |
 
 Tested: the flag parsing, the `--out` folder rule, the copy that skips the
 copies, and one real export of the starter app with all three options. Not

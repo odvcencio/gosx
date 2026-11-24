@@ -609,6 +609,90 @@ graph.Rig = animgraph.Rig{
 }
 ```
 
+### One model, many bodies
+
+Players who share one GLB can each have their own build. Author the shapes
+as morph targets, name them in `mesh.extras.targetNames`, and give each
+`scene.Model` its weights:
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    MorphWeights: map[string]float64{"mass": .8, "belly": .4, "pads": .5}}
+```
+
+Every model with `MorphWeights` and the same `Src` shares one loaded copy
+that keeps its targets; each folds its own weights into its own vertices
+before skinning, so every clip and IK chain still fits. Declare a weight of
+0 for each target a model may use later: a model declared with no weights
+loads its GLB without targets.
+
+`scene.PatchModelsCommand` changes a mounted model in place on the next
+frame, without loading it again: its morph weights, joint scales, scale and
+visibility.
+A game whose models show different players from play to play patches only
+the models whose player changed:
+
+```go
+cmd := scene.PatchModelsCommand([]scene.ModelPatch{{
+    ID:           "home-03",
+    MorphWeights: map[string]float64{"mass": -.4, "pads": -.6},
+    Scale:        &scene.Vector3{X: .97, Y: .97, Z: .97},
+}})
+```
+
+Targets a patch does not name return to their authored weight. Instanced
+crowds (`InstancedGLBMesh`) do not read `MorphWeights`.
+
+`ModelPatch.Uniforms` sets material values by name on the objects that
+draw with the model's own material, such as a Selena material's params, so
+one material can give each player his own skin tone; the next frame packs
+them.
+
+### Gear on joints
+
+`Model.Attachments` fixes the meshes of another glTF to one joint of a
+skinned model: a facemask on the head, a glove on a hand, a towel at the hip.
+Model each piece where it sits on the character in its bind pose, in the
+character's units, and give each piece a mesh name. Scene3D binds every
+vertex of the piece wholly to the joint, so the joint matrices that pose the
+body pose the gear on the same frame, on the GPU:
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    Attachments: []scene.Attachment{
+        {Name: "mask-cage", Src: "/arena/gear.glb", Mesh: "mask-cage", Joint: "head"},
+        {Name: "visor-smoke", Src: "/arena/gear.glb", Mesh: "visor", Joint: "head", Hidden: true,
+            Material: &scene.StandardMaterial{Color: "#1c2226", Opacity: scene.Float(.7), BlendMode: scene.BlendAlpha}},
+    }}
+```
+
+Every model shares one loaded copy of the gear file. A piece with no
+`Material` draws with the model's own material, so gear painted on the
+model's texture atlas takes its colours. A hidden piece costs no draw, and
+`ModelPatch.Attachments` shows or hides pieces of a mounted model by name, so
+a model can carry every piece its players might wear and show the pieces
+this player wears. `assetpipe/author.PropSet` writes such a gear file: one
+unskinned mesh and node per piece.
+
+### Bigger or smaller parts
+
+`Model.JointScales` scales joints of one model's skin, by joint name, so
+players who share one GLB and one rig can differ in the size of a part: a
+larger head and helmet on a heavier lineman, say.
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    JointScales: map[string]float64{"head": 1.06}}
+```
+
+Each factor multiplies the joint's own scale on all three axes, on top of
+the pose, the same way `animgraph.Rig.BoneScale` does for every model on a
+rig. It scales the vertices the joint moves, the gear fixed to it
+(`Attachments`) and every joint below it, about the joint's origin. Use the
+joint that a part hangs from: a head scaled at its base grows upward and
+keeps the neck where it was. `ModelPatch.JointScales` changes the scales of
+a mounted model on the next frame; an empty map clears them.
+
 ### Clip names and durations
 
 `gltfclip.Read(glb)` returns each animation's name and duration from the
