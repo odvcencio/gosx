@@ -14,10 +14,10 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/hydrate"
-	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/gosx/server"
 )

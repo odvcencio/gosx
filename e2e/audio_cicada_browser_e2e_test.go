@@ -14,8 +14,8 @@ import (
 
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/game/audio/worklet"
 	"m31labs.dev/gosx/browsertest"
+	"m31labs.dev/gosx/game/audio/worklet"
 )
 
 // cicadaPageHTML drives the real mixer (the bootstrap's window.__gosx.audioMixer),

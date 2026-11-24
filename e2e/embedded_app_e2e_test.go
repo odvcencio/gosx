@@ -19,9 +19,9 @@ import (
 	"github.com/chromedp/chromedp"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/hub"
-	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/server"
 	"m31labs.dev/gosx/session"
 )

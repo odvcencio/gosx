@@ -21,8 +21,8 @@ import (
 	cdpRuntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/gorilla/websocket"
-	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/browsertest"
+	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/island/program"
 	ouroboros "m31labs.dev/gosx/perf/ouroboros"
 )
