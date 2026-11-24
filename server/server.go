@@ -15,7 +15,6 @@ import (
 	"io"
 	"log"
 	"log/slog"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,6 +32,7 @@ import (
 	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/internal/httpcache"
+	"m31labs.dev/gosx/internal/mediatype"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -1201,7 +1201,7 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 	// place and the next view must see it.
 	if strings.EqualFold(filepath.Ext(fsPath), ".webmanifest") {
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
-	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
+	} else if contentType := mediatype.ForServing(filepath.Ext(fsPath)); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
 	if r.URL.Query().Get("v") != "" {

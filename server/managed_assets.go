@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"mime"
 	"net/http"
 	"path"
 	"strings"
 	"time"
+
+	"m31labs.dev/gosx/internal/mediatype"
 )
 
 // ManagedAssets serves an immutable filesystem at content-addressed URLs and
@@ -79,7 +80,7 @@ func (a *ManagedAssets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
+	if ct := mediatype.ForServing(path.Ext(name)); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
 	cache := NewCacheState()

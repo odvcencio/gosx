@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"m31labs.dev/gosx/internal/mediatype"
 )
 
 // singleFileShell is the page that unpacks the payload in the browser. It is
@@ -198,23 +200,12 @@ func singleFileIsLight(color string) bool {
 	return 0.2126*r+0.7152*g+0.0722*b > 140
 }
 
-// singleFileTypes is fixed, not read from the host's MIME database, so the
-// same bundle packs to the same bytes on every machine. The browser needs the
-// right type for WebAssembly streaming, scripts, styles and fonts.
-var singleFileTypes = map[string]string{
-	".wasm": "application/wasm", ".js": "text/javascript", ".mjs": "text/javascript",
-	".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json",
-	".txt": "text/plain", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
-	".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
-	".ico": "image/x-icon", ".glb": "model/gltf-binary", ".gltf": "model/gltf+json",
-	".bin": "application/octet-stream", ".woff": "font/woff", ".woff2": "font/woff2",
-	".ttf": "font/ttf", ".otf": "font/otf", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
-	".wav": "audio/wav", ".mp4": "video/mp4", ".webm": "video/webm", ".ktx2": "image/ktx2",
-	".wgsl": "text/plain",
-}
-
+// singleFileMIME names a file's type from GoSX's fixed table, not from the
+// host's MIME database, so the same bundle packs to the same bytes on every
+// machine. The browser needs the right type for WebAssembly streaming,
+// scripts, styles and fonts.
 func singleFileMIME(rel string) string {
-	if t, ok := singleFileTypes[strings.ToLower(path.Ext(rel))]; ok {
+	if t := mediatype.ByExtension(path.Ext(rel)); t != "" {
 		return t
 	}
 	return "application/octet-stream"
