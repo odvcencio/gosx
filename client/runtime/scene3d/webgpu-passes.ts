@@ -576,7 +576,7 @@
   }
 
   function ensurePointsUniformGPUBuffer(meshState: any, device: any, owner, uniformData) {
-    return wgpuCachedTrackedBuffer(meshState, device, 
+    return wgpuCachedTrackedBuffer(meshState, device,
       owner,
       "_gosxWGPUPointsUniformBuffer",
       uniformData,
@@ -586,7 +586,7 @@
   }
 
   function ensurePointsParticleVertexGPUBuffer(meshState: any, device: any, entry, particleData) {
-    return wgpuCachedTrackedBuffer(meshState, device, 
+    return wgpuCachedTrackedBuffer(meshState, device,
       entry,
       "_gosxWGPUPointsParticleVertexBuffer",
       particleData,
@@ -688,7 +688,7 @@
         meshState.retainedMeshBufferStats.rebuilds += 1;
         webGPURetireRetainedMeshAttribute(meshState, entry, key);
       }
-      var buffer = wgpuCreateTrackedBuffer(meshState, device, 
+      var buffer = wgpuCreateTrackedBuffer(meshState, device,
         GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
         data.byteLength || 4
       );
@@ -797,7 +797,7 @@
         meshState.retainedMeshBufferStats.rebuilds += 1;
         webGPURetireRetainedMeshAttribute(meshState, entry, "indices");
       }
-      var buffer = wgpuCreateTrackedBuffer(meshState, device, 
+      var buffer = wgpuCreateTrackedBuffer(meshState, device,
         GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
         data.byteLength || 4
       );
@@ -905,7 +905,7 @@
       owner._gosxWGPUElioSkinRecord = record;
     }
 
-    var boneBuffer = wgpuCachedTrackedBuffer(meshState, device, 
+    var boneBuffer = wgpuCachedTrackedBuffer(meshState, device,
       skin,
       "_gosxWGPUElioSkinBoneBuffer",
       boneData,
