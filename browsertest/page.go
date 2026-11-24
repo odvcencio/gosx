@@ -112,6 +112,7 @@ type Page struct {
 	budget   time.Duration
 	deadline *time.Timer
 	ends     time.Time // when deadline fires
+	clock    *Clock    // the capture clock, made by Clock
 }
 
 // DefaultStep is the longest one Run may take when Page.Step is zero, before

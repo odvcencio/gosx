@@ -5,6 +5,7 @@
 | `Launch(t, Options{})` | A bound, active tab in a Chrome it starts (with `Start`, below), or in a running browser named by `Options.Endpoint`; closed when the test ends. Skips the test when no Chrome is found (`FindChrome`). |
 | `Open(path, OpenOptions{...})` | Loads a file or URL with the viewport, touch, focus, offline and init scripts a check asks for. `CountFrames` installs `FrameCounter`. |
 | `NewPage(t, tab, budget)` | `Run`, `Eval`, `Text`, `WaitFor`, `TryWait`, `Frames`, `WaitFrames`, `Screenshot`, with a deadline that `Stretch` and `MeasureFrameRate` move when the page draws slowly. |
+| `Page.Clock()`, `Page.WaitFramesUntil` | The host side of the capture clock, and a wait paced by the page's drawn frames (see Time in a check). |
 | `Page.Step`, `Page.Shots` | Each `Run` has a deadline of its own (default `DefaultStep`, 60 s, times `Slow`, ending `StepMargin` before the page's deadline; `-1` for none). A failed `Run` or `WaitFor` names the action it was on (`Describe`), describes the page and saves a picture (see Failures). |
 
 ## Chrome startup
@@ -71,3 +72,11 @@ A failed `Run` or `WaitFor` ends the test with four things:
 4. `picture:`, the path of a PNG of the viewport, in `Page.Shots`, else `BROWSERTEST_SHOTS`, else `browsertest-failures` in the temporary folder.
 
 The look and the picture run on a context of their own with a 15-second limit, so they work after the page's deadline has cancelled `Page.Ctx`. A step that sticks fails at its own limit, at least `StepMargin` before the page's deadline, so a `Snapshot` that uses `Page.Ctx` still answers.
+
+## Time in a check
+
+A check is wrong about time when it waits a fixed number of seconds for what the page does in a fixed number of frames, or when it stretches every wait by a speed measured once at page open (`Slow`, `MeasureFrameRate`) and the load then changes. Use one of these instead.
+
+1. **The game's own time: take the clock.** A page built with the `gosx_capture` tag (GoSX `game/loop`) can advance by frames the host grants. `c := page.Clock()`; `c.Take(stepMS)` sets the game time of one granted frame (a game with a 30 per second tick passes `1000.0/30`); `c.Step(n)` grants `n` frames and returns when the page has stepped and drawn them; `c.StepUntil(cond, max)` grants one frame at a time until a JavaScript condition holds; `c.StepWhile(change)` runs an action the page answers on a frame (a pad press) and grants frames until it returns; `c.Release()` gives the clock back. A timing check on the clock gives the same result on a loaded machine. The methods return errors, and `Clock.Bound` (default `ClockBound`, 30 s of wall time, not stretched by `Slow`) limits `Step`.
+2. **A page on its own time: wait in frames.** `page.WaitFramesUntil(what, cond, frames, wall)` polls `cond` and fails when the page has drawn `frames` frames and `cond` is still false. A page that draws no frame is not failed before `wall` has passed since its last frame, and the error then says the page stalled, with the frame count. It counts `FrameCounter`'s frames when the page has them (the page must have called `window.__countFrames()`), else a counter of its own from the call on. `Page.WaitFrames(n, limit)` is the older call that waits for `n` drawn frames and returns nothing.
+3. **Outside the game's loop: wait in wall time.** `WaitFor` and `TryWait` are right for what the game's loop does not run: a network fetch, a file download.
