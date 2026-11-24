@@ -473,9 +473,19 @@ func TestWrongTokenIsRefusedAndRealPageStillConnects(t *testing.T) {
 func TestSecondPageIsRefused(t *testing.T) {
 	srv := startServer(t)
 	readyPage(t, srv)
-	_, resp, err := websocket.DefaultDialer.Dial(host.PadTestWebSocketURL(srv.port), nil)
-	if err == nil || resp == nil || resp.StatusCode != 409 {
-		t.Fatalf("second dial: err %v resp %+v, want HTTP 409", err, resp)
+	// A browser reports an HTTP status on a refused upgrade as an error and a
+	// 1006 close, which a page treats as "retry". The refusal must be a
+	// WebSocket close with a final code and a reason.
+	c, _, err := websocket.DefaultDialer.Dial(host.PadTestWebSocketURL(srv.port), nil)
+	if err != nil {
+		t.Fatalf("second dial: %v, want an upgraded socket that is then closed", err)
+	}
+	defer c.Close()
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = c.ReadMessage()
+	var ce *websocket.CloseError
+	if !errors.As(err, &ce) || ce.Code != websocket.ClosePolicyViolation || ce.Text != "page already connected" {
+		t.Fatalf("second dial read error %v, want close 1008 \"page already connected\"", err)
 	}
 }
 

@@ -212,9 +212,25 @@ func (s *Server) Addr() string { return s.ln.Addr().String() }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	if s.claimed || s.isDoneLocked() {
+	refusal := ""
+	switch {
+	case s.isDoneLocked():
+		refusal = "server finished"
+	case s.claimed:
+		refusal = "page already connected"
+	}
+	if refusal != "" {
 		s.mu.Unlock()
-		http.Error(w, "page already connected", http.StatusConflict)
+		// Upgrade and then close with a final code and a reason. An HTTP
+		// status before the upgrade reaches a browser page as an error event
+		// and a 1006 close, which the page reads as "try again".
+		up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		conn, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, refusal), time.Now().Add(time.Second))
+		conn.Close()
 		return
 	}
 	if s.unauth >= maxUnauthenticated {

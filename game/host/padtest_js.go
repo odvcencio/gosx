@@ -13,12 +13,13 @@ import (
 // working one.
 const padTestAttribute = "data-padtest"
 
-// padTestTimeoutMS is how long one attempt waits for the server's answer,
-// counted from the moment that attempt's hello was sent (not from when its
-// socket was created, which a busy page may not follow with a hello for a long
-// time). An attempt that waits this long counts as failed and the page tries
-// again. The page as a whole gives up padTestJoinWindow after its first
-// attempt; see padtest_retry.go.
+// padTestTimeoutMS is how long one attempt waits for its socket to open and
+// its hello to go out, counted from the moment the socket is created. An
+// attempt that waits this long counts as failed and the page tries again. Once
+// hello is sent the timer no longer ends the attempt: the server may already
+// have claimed the page and admits one page only, so the page waits for ready
+// until the join window ends. The page as a whole gives up padTestJoinWindow
+// after its first attempt; see padtest_retry.go.
 const padTestTimeoutMS = 10000
 
 // padTestMaxQueued bounds the messages held until the server answers hello.
@@ -31,7 +32,7 @@ type padTestPage struct {
 	src     *PadTestSource
 	session *PadTestSession
 	queued  []PadMessage
-	timer   js.Value // the attempt's wait for the server's answer to hello
+	timer   js.Value // the attempt's wait for its socket to open and hello to go out
 	retry   *padTestRetry
 	url     string
 	wait    js.Value // pending delay before the next attempt
@@ -238,18 +239,24 @@ func (p *padTestPage) open() {
 	p.ws = ws
 	// A handler of a socket that is no longer current does nothing.
 	current := func() bool { return !p.done && p.ws.Truthy() && p.ws.Equal(ws) }
+	// The attempt timer runs from here until hello is sent.
+	p.timer = js.Global().Call("setTimeout", p.fn(func(js.Value, []js.Value) any {
+		if current() && p.retry.AttemptTimerEnds() {
+			p.attemptFailed("the socket did not open and send hello in time", 0)
+		}
+		return nil
+	}), padTestTimeoutMS)
 	ws.Set("onopen", p.fn(func(js.Value, []js.Value) any {
 		if !current() {
 			return nil
 		}
 		p.send(p.session.Hello())
-		// The answer timer starts when hello goes out.
-		p.timer = js.Global().Call("setTimeout", p.fn(func(js.Value, []js.Value) any {
-			if current() && !p.ready {
-				p.attemptFailed("server did not answer hello", 0)
-			}
-			return nil
-		}), padTestTimeoutMS)
+		// Hello is out: the attempt timer no longer applies.
+		p.retry.HelloSent()
+		if p.timer.Truthy() {
+			js.Global().Call("clearTimeout", p.timer)
+			p.timer = js.Undefined()
+		}
 		return nil
 	}))
 	ws.Set("onmessage", p.fn(func(_ js.Value, args []js.Value) any {

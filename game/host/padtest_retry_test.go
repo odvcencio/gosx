@@ -66,3 +66,21 @@ func TestRetryPolicyNeverRetriesARefusal(t *testing.T) {
 		}
 	}
 }
+
+func TestHelloSentEndsTheAttemptTimer(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	p := newPadTestRetry(t0)
+	if !p.AttemptTimerEnds() {
+		t.Fatal("the attempt timer cannot end an attempt that has not sent hello")
+	}
+	p.HelloSent()
+	if p.AttemptTimerEnds() {
+		t.Fatal("the attempt timer still ends an attempt whose hello is sent")
+	}
+	if _, ok := p.Failed(t0.Add(time.Second), 0); !ok {
+		t.Fatal("a failed attempt did not retry")
+	}
+	if !p.AttemptTimerEnds() {
+		t.Fatal("a new attempt did not get its timer back")
+	}
+}
