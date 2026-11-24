@@ -1,6 +1,6 @@
 package scene
 
-import "math"
+import "m31labs.dev/gosx/det"
 
 // InstanceBatch streams one InstancedMesh's instances each frame: it keeps
 // the frame's data, the batch's revision and its StreamWriter, so a game
@@ -27,7 +27,9 @@ func NewInstanceBatch(mount, batchID string, kind InstanceStreamKind) *InstanceB
 func (b *InstanceBatch) Len() int { return len(b.data) / b.Kind.Stride() }
 
 // Truncate keeps the first n instances.
-func (b *InstanceBatch) Truncate(n int) { b.data = b.data[:min(len(b.data), max(0, n)*b.Kind.Stride())] }
+func (b *InstanceBatch) Truncate(n int) {
+	b.data = b.data[:min(len(b.data), max(0, n)*b.Kind.Stride())]
+}
 
 // grow makes room for instance i.
 func (b *InstanceBatch) grow(i int) []float32 {
@@ -73,12 +75,12 @@ func (b *InstanceBatch) Dispose() { b.writer.Dispose() }
 // then a tilt about the instance's own X axis, then a turn about the world's
 // Y axis, then the position.
 func PlaceInstance(dst []float32, at, scale Vector3, yaw, tilt float64) {
-	cy, sy := math.Cos(yaw), math.Sin(yaw)
-	c, s := math.Cos(tilt), math.Sin(tilt)
+	cy, sy := det.Cos(yaw), det.Sin(yaw)
+	c, s := det.Cos(tilt), det.Sin(tilt)
 	m := [16]float64{
-		cy * scale.X, 0, -sy * scale.X, 0,
-		sy * s * scale.Y, c * scale.Y, cy * s * scale.Y, 0,
-		sy * c * scale.Z, -s * scale.Z, cy * c * scale.Z, 0,
+		float64(cy * scale.X), 0, float64(-sy * scale.X), 0,
+		float64(sy * s * scale.Y), float64(c * scale.Y), float64(cy * s * scale.Y), 0,
+		float64(sy * c * scale.Z), float64(-s * scale.Z), float64(cy * c * scale.Z), 0,
 		at.X, at.Y, at.Z, 1,
 	}
 	for k, v := range m {

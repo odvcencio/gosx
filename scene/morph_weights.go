@@ -7,6 +7,7 @@ import "math"
 // nothing is left, so the field is omitted from the IR.
 func finiteMorphWeights(weights map[string]float64) map[string]float64 {
 	var out map[string]float64
+	//gosx:allow map-range copies each entry independently of order
 	for name, w := range weights {
 		if name == "" || math.IsNaN(w) || math.IsInf(w, 0) {
 			continue
@@ -24,6 +25,7 @@ func finiteMorphWeights(weights map[string]float64) map[string]float64 {
 // left, so the field is omitted from the IR.
 func positiveJointScales(scales map[string]float64) map[string]float64 {
 	var out map[string]float64
+	//gosx:allow map-range copies each entry independently of order
 	for name, f := range scales {
 		if name == "" || !(f > 0) || math.IsInf(f, 0) {
 			continue
