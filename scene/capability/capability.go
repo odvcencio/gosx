@@ -133,7 +133,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	// has been joint-skinned on either backend. Pixel-level lighting parity
 	// between the two renderers is a separate question this row does not claim.
 	FeatureSkinning: {BackendWebGPU: true, BackendWebGL: true},
-	// WebGPU true, WebGL2 false. Both cells are corroborated against renderer
+	// WebGPU true, WebGL2 true. Both cells are corroborated against renderer
 	// source; see ibl_test.go.
 	//
 	// Image-based lighting (IBL) needs a prefiltered specular cube, an
