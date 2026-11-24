@@ -308,10 +308,18 @@ var litSharedTerms = []sharedTerm{
 	{
 		// The browser passes the hemisphere ambient through gosxCoatOver, so
 		// a clear coat can dim it; the coat itself is a ledger row.
+		//
+		// The browser term also carries a light-model factor,
+		// select(1.0, 1.0 - metalness, env.lightModel == 1u). It is 1.0 in the
+		// default legacy model and removes the metal's ambient diffuse in the
+		// opt-in physical model (951c76b814). The native shader has no light
+		// model and always shades as the legacy model, so it matches the
+		// browser's default and differs from an opted-in physical scene. The
+		// pattern pins the factor so a change to it sends a person here.
 		id:     "ambient-scaled-by-base-colour",
 		effect: "Ambient light stops taking the surface colour, so every shadowed face turns grey.",
 		goPat:  `let ambient = envDiffuse \* baseColor;`,
-		jsPat:  `GosxLit\(envDiffuse \* albedo \* \(1\.0 - transmission\), vec3f\(0\.0\)\)`,
+		jsPat:  `GosxLit\(envDiffuse \* albedo \* \(1\.0 - transmission\) \* select\(1\.0, 1\.0 - metalness, env\.lightModel == 1u\), vec3f\(0\.0\)\)`,
 	},
 
 	// The rows below arrived with the scene light array. The native copy read

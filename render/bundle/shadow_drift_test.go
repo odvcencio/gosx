@@ -425,7 +425,7 @@ func checkBrowserShadowCullSites(sites []shadowCullSite, webgpu, webglShadowPass
 func checkBrowserReflectionFrontFaceContract(webgpu, webgl string) []string {
 	requirements := []struct{ id, where, source, needle string }{
 		{"webgpu-static-front-face-option", jsWebGPURendererFile, webgpu, `primitive: { topology: "triangle-list", cullMode: "front", frontFace: frontFace || "ccw" }`},
-		{"webgpu-reflected-static-cw", jsWebGPURendererFile, webgpu, `shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "cw")`},
+		{"webgpu-reflected-static-cw", jsWebGPURendererFile, webgpu, `pipeState.shadowReflectedPipeline = wgpuCreateShadowPipeline(device, pipeState.shadowBindGroupLayout, pipeState.shadowVertexModule, "cw")`},
 		{"webgpu-instanced-orientation", jsWebGPURendererFile, webgpu, `out.orientation = gosxAffineNormal(model, vec3f(0.0,0.0,1.0)).w;`},
 		{"webgpu-instanced-fragment-classifier", jsWebGPURendererFile, webgpu, `if (frontFacing != (in.orientation > 0.0)) { discard; }`},
 		{"webgl-reflected-static-front-face", jsWebGLRendererFile, webgl, `gl.frontFace(obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);`},
@@ -611,8 +611,8 @@ var shadowCullGuardMutations = []shadowCullMutation{
 	{
 		name:    "browser WebGPU maps reflected retained casters to CCW",
 		side:    "webgpu",
-		from:    `shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "cw")`,
-		to:      `shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "ccw")`,
+		from:    `pipeState.shadowReflectedPipeline = wgpuCreateShadowPipeline(device, pipeState.shadowBindGroupLayout, pipeState.shadowVertexModule, "cw")`,
+		to:      `pipeState.shadowReflectedPipeline = wgpuCreateShadowPipeline(device, pipeState.shadowBindGroupLayout, pipeState.shadowVertexModule, "ccw")`,
 		wantRow: "webgpu-reflected-static-cw",
 	},
 }
