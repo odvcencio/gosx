@@ -28,7 +28,6 @@ function tick() {
   const step = parseFloat(root.getAttribute("data-gosx-capture-step") || "0");
   const grant = parseInt(root.getAttribute("data-gosx-capture-grant") || "0", 10);
   if (step > 0 && location.hash !== "#stall") {
-    if (done > grant) done = grant;
     if (done < grant) { done++; window.ticks++; root.setAttribute("data-gosx-capture-done", String(done)); }
   }
   requestAnimationFrame(tick);
@@ -102,6 +101,35 @@ func TestClockGrantsFramesAndWaitsForDone(t *testing.T) {
 	}
 	if c.Granted() != 5 {
 		t.Errorf("Granted = %d, want 5", c.Granted())
+	}
+}
+
+// TestClockCanBeTakenTwice: the page's done count never goes down, so a second
+// Take must start its grant from that count and not from zero.
+func TestClockCanBeTakenTwice(t *testing.T) {
+	p := clockPage(t, "")
+	c := p.Clock()
+	c.Bound = 5 * time.Second
+	if err := c.Take(16); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Step(5); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Take(16); err != nil {
+		t.Fatal(err)
+	}
+	if got := attr(p, "data-gosx-capture-grant"); got != "5" {
+		t.Errorf("grant attribute after the second Take = %q, want 5 (the page's done count)", got)
+	}
+	if err := c.Step(1); err != nil {
+		t.Fatalf("Step(1) after a second Take: %v", err)
+	}
+	if got := attr(p, "data-gosx-capture-done"); got != "6" {
+		t.Errorf("done after the second Take and Step(1) = %q, want 6", got)
 	}
 }
 

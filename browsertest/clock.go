@@ -53,13 +53,26 @@ func (p *Page) Clock() *Clock {
 }
 
 // Take puts the game on the host's clock: from now on it advances stepMS of
-// game time for each frame granted with Step. It resets the grant to zero.
+// game time for each frame granted with Step. The page's count of frames done
+// never goes down, so Take starts the grant from that count (zero on a page
+// that has stepped none): a check can Take, Step, Release and Take again.
 func (c *Clock) Take(stepMS float64) error {
 	if stepMS <= 0 {
 		return fmt.Errorf("capture clock: the step must be above zero milliseconds, got %v", stepMS)
 	}
+	var done string
+	if err := chromedp.Run(c.p.Ctx, chromedp.Evaluate(`document.documentElement.getAttribute("data-gosx-capture-done") ?? ""`, &done)); err != nil {
+		return fmt.Errorf("capture clock: read data-gosx-capture-done: %w", err)
+	}
 	c.granted = 0
-	if err := c.write("data-gosx-capture-grant", "0"); err != nil {
+	if done != "" {
+		n, err := strconv.ParseUint(done, 10, 64)
+		if err != nil {
+			return fmt.Errorf("capture clock: data-gosx-capture-done is %q, not a frame count", done)
+		}
+		c.granted = n
+	}
+	if err := c.write("data-gosx-capture-grant", strconv.FormatUint(c.granted, 10)); err != nil {
 		return err
 	}
 	return c.write("data-gosx-capture-step", strconv.FormatFloat(stepMS, 'f', -1, 64))
@@ -70,7 +83,8 @@ func (c *Clock) Release() error {
 	return c.write("data-gosx-capture-step", "0")
 }
 
-// Granted is how many frames the clock has granted since Take.
+// Granted is the running total of frames granted: the page's count of frames
+// done at Take, plus every frame granted since.
 func (c *Clock) Granted() uint64 { return c.granted }
 
 // Step grants n frames and returns when the page has stepped and drawn them.
@@ -129,8 +143,15 @@ func (c *Clock) StepUntil(cond string, max int) (int, error) {
 
 // StepWhile runs change, such as a pad press that the page answers on a frame,
 // and grants frames one at a time until it returns, so the page reads the
-// change on the first frame granted after it was sent. It fails after 20
-// frames without an answer. After a failure change may still be running.
+// change on the first or second frame granted after it was sent. It fails
+// after 20 frames without an answer. After a failure change may still be
+// running.
+//
+// StepWhile promises that a change is answered within a few frames. It does
+// not promise the exact frame: the change reaches the page by one channel (a
+// pad message, say) and the grant by another (a DevTools attribute write), and
+// which arrives first varies with load. A check that needs a press on an exact
+// frame sets the input on a named frame with hosttest's SetAt instead.
 func (c *Clock) StepWhile(change func()) error {
 	done := make(chan struct{})
 	go func() { defer close(done); change() }()
