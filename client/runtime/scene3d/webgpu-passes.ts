@@ -853,16 +853,15 @@
 
   function webGPUElioEnsureOutputBuffer(meshState: any, device: any, record, paddedCount) {
     var bytes = Math.max(4, paddedCount * 10 * 4);
-    // Cross-renderer staleness guard: scene objects retain their skin
-    // records across renderer rebuilds, but dispose() destroys every buffer
-    // tracked in pointsEntryGPUBuffers. A cached outputBuffer absent from
-    // THIS renderer's set belongs to a dead device — drop the stale JS
-    // reference WITHOUT calling destroy() again (dispose already destroyed
-    // it), so the alloc path below creates a fresh buffer on the current
-    // device. Mirrors the owner[slot] guard in sceneCachedTrackedBuffer.
-    // The bind group is invalidated too: it was created on the dead device
-    // and references the destroyed buffer, so no cache path below may
-    // return with a live-looking bindGroup around the dead buffer.
+    // Cross-renderer staleness guard: scene objects retain their skin records
+    // across renderer rebuilds, but dispose() destroys every buffer tracked in
+    // pointsEntryGPUBuffers. A cached outputBuffer absent from THIS renderer's
+    // set belongs to a dead device — drop the stale JS reference WITHOUT calling
+    // destroy() again (dispose already destroyed it), so the alloc path below
+    // creates a fresh buffer on the current device. Mirrors the owner[slot] guard
+    // in sceneCachedTrackedBuffer. The bind group is invalidated too: it was
+    // created on the dead device and references the destroyed buffer, so no cache
+    // path below may return with a live-looking bindGroup around the dead buffer.
     if (record.outputBuffer && !meshState.pointsEntryGPUBuffers.has(record.outputBuffer)) {
       record.outputBuffer = null;
       record.bindGroup = null;
@@ -871,16 +870,14 @@
     const retired = record.outputBuffer;
     if (retired) {
       meshState.pointsEntryGPUBuffers.delete(retired);
-      // The current render calls submit synchronously. Its velocity copy can
-      // still reference the old output until that call returns.
+      // The current render calls submit synchronously; its velocity copy can still read the old output until it returns.
       queueMicrotask(() => retired.destroy());
     }
     record.outputBuffer = wgpuCreateTrackedBuffer(meshState, device, GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, bytes);
     return record.outputBuffer;
   }
 
-  // webGPUObjectSkinOutputRecord returns the owner's packed output and its
-  // logical vertex count, before or after this frame's dispatch.
+  // webGPUObjectSkinOutputRecord returns the owner's packed output and its logical vertex count, before or after this frame's dispatch.
   function webGPUObjectSkinOutputRecord(meshState: any, obj: any) {
     var owner = webGPUObjectResourceOwner(obj);
     var record = owner && owner._gosxWGPUElioSkinRecord;

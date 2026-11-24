@@ -309,10 +309,8 @@ function taaDrawMovers(st: any, r: any, pass: any, objects: any[]) {
     r.device.queue.writeBuffer(st.moverBuffer, m * 256, data, 0, 32);
     pass.setBindGroup(0, group, [m * 256]);
     if (item.skin) {
-      const size = item.skin.count * 12;
-      const current = item.skin.outputBuffer, previous = r.previousSkin(item.obj);
-      pass.setVertexBuffer(0, current, 0, size);
-      pass.setVertexBuffer(1, previous?.size === size ? previous : current, 0, size);
+      const size = item.skin.count * 12, current = item.skin.outputBuffer, previous = r.previousSkin(item.obj);
+      pass.setVertexBuffer(0, current, 0, size); pass.setVertexBuffer(1, previous?.size === size ? previous : current, 0, size);
     } else if (!r.bindPositions(pass, 0, item.obj) || !r.bindPositions(pass, 1, item.obj)) continue;
     var indexCount = r.bindIndices(pass, item.obj);
     if (indexCount > 0) pass.drawIndexed(indexCount); else pass.draw(item.obj.vertexCount);
@@ -415,20 +413,16 @@ function taaResolve(st: any, encoder: any, effects: any[], frame: any) {
   return resolved ? effects.filter(function(e: any) { return !e || e.kind !== "taa"; }) : effects;
 }
 
-// taaCapturePreviousSkins copies each skinned mesh's positions before this frame's skinning dispatch overwrites them.
-// The copy belongs to the scene object (resourceOwner) on this device, not to the draw record rebuilt every frame.
+// taaCapturePreviousSkins copies each skinned mesh's positions before this frame's skinning dispatch overwrites them. The copy belongs to the scene object (resourceOwner) on this device, not to the draw record rebuilt every frame.
 function taaCapturePreviousSkins(st: any, encoder: any, objects: any[]) {
   if (!st.active || !st.valid) return;
   var r = st.resources();
   for (var i = 0; i < (objects || []).length; i++) {
-    const obj = objects[i], skin = obj && !obj.viewCulled && r.skinRecord(obj);
-    if (!skin) continue;
-    const size = skin.count * 12; // The first stream is packed float32x3 positions.
-    const owner = obj.resourceOwner || obj;
+    const obj = objects[i], skin = obj && !obj.viewCulled && r.skinRecord(obj); if (!skin) continue;
+    const size = skin.count * 12, owner = obj.resourceOwner || obj; // The first stream is packed float32x3 positions.
     let previous = owner._gosxTAAPreviousSkin;
     if (!previous || previous.size !== size || owner._gosxTAAPreviousSkinDevice !== r.device) {
-      previous?.destroy();
-      previous = owner._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); owner._gosxTAAPreviousSkinDevice = r.device;
+      previous?.destroy(); previous = owner._gosxTAAPreviousSkin = r.device.createBuffer({ label: "gosx-taa-previous-skin", size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); owner._gosxTAAPreviousSkinDevice = r.device;
     }
     encoder.copyBufferToBuffer(skin.outputBuffer, 0, previous, 0, size);
   }
