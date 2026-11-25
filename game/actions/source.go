@@ -21,6 +21,13 @@ const (
 	KindPadButton
 	// KindPadAxis is a gamepad axis, "axis0".."axisN", in [-1,1].
 	KindPadAxis
+	// KindTouchButton is an on-screen button that a finger, a pen or the
+	// mouse holds down. Its code is the name the page gives it ("sprint").
+	KindTouchButton
+	// KindTouchAxis is one axis of an on-screen stick, "<stick>.x" or
+	// "<stick>.y", in [-1,1]. As on a gamepad, x grows to the right and y
+	// grows downward.
+	KindTouchAxis
 )
 
 // Motion source codes.
@@ -35,6 +42,8 @@ const (
 const (
 	DeviceKeyboard = "keyboard"
 	DeviceMouse    = "mouse"
+	// DeviceTouch is the screen: its on-screen sticks and buttons.
+	DeviceTouch = "touch"
 )
 
 // PadDevice returns the device name for the gamepad at browser slot index.
@@ -64,6 +73,18 @@ func PadButton(n int) Source { return Source{KindPadButton, "button" + strconv.I
 // PadAxis returns the source for gamepad axis n.
 func PadAxis(n int) Source { return Source{KindPadAxis, "axis" + strconv.Itoa(n)} }
 
+// TouchButton returns the source for the on-screen button called name.
+func TouchButton(name string) Source { return Source{KindTouchButton, name} }
+
+// TouchAxis returns the source for one axis of the on-screen stick called
+// stick: the horizontal one, or the vertical one, which grows downward.
+func TouchAxis(stick string, vertical bool) Source {
+	if vertical {
+		return Source{KindTouchAxis, stick + ".y"}
+	}
+	return Source{KindTouchAxis, stick + ".x"}
+}
+
 // Zero reports whether s is the empty (unbound) source.
 func (s Source) Zero() bool { return s.Kind == 0 || s.Code == "" }
 
@@ -75,23 +96,29 @@ const (
 	ClassKeyboardMouse Class = iota + 1
 	// ClassGamepad covers gamepad buttons and axes.
 	ClassGamepad
+	// ClassTouch covers on-screen buttons and sticks.
+	ClassTouch
 )
 
 // Class returns the device family of s.
 func (s Source) Class() Class {
-	if s.Kind == KindPadButton || s.Kind == KindPadAxis {
+	switch s.Kind {
+	case KindPadButton, KindPadAxis:
 		return ClassGamepad
+	case KindTouchButton, KindTouchAxis:
+		return ClassTouch
 	}
 	return ClassKeyboardMouse
 }
 
 func (s Source) latches() bool {
-	return s.Kind == KindKey || s.Kind == KindMouseButton || s.Kind == KindPadButton
+	return s.Kind == KindKey || s.Kind == KindMouseButton || s.Kind == KindPadButton || s.Kind == KindTouchButton
 }
 
 var kindNames = map[Kind]string{
 	KindKey: "key", KindMouseButton: "mouse", KindMouseMotion: "motion",
 	KindPadButton: "padbtn", KindPadAxis: "padaxis",
+	KindTouchButton: "touch", KindTouchAxis: "touchaxis",
 }
 
 // String returns the stable text form "kind:Code" used in saved bindings.
@@ -143,6 +170,10 @@ type Event struct {
 	Device string
 	Source Source
 	Value  float64
+	// Canceled marks a release (Value 0) that the player did not make: the
+	// browser took the touch away, or the finger's pointer was lost. The
+	// action then reads Released and Canceled together (State.Canceled).
+	Canceled bool
 }
 
 // Sink receives raw input events. Map and Router implement it.

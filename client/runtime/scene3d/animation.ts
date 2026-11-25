@@ -26,8 +26,10 @@
   // nodes: glTF node array (each has optional children, translation, rotation, scale).
   // animatedTransforms: Map<nodeIndex, { translation, position, rotation, scale }> from mixer.
   // rootTransform: optional model-instance transform prepended to root nodes.
+  // jointScales: optional factor per node (the model's own joint scales,
+  // scene.Model.JointScales; 1 for none) that scales its local frame evenly.
   // Returns Map<nodeIndex, Float32Array(16)> of world transforms (reused map).
-  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform, rootNodes) {
+  function sceneAnimBuildNodeTransforms(nodes, animatedTransforms, rootTransform, rootNodes, jointScales?: Float64Array | null) {
     _nodeTransforms.clear();
 
     function walkNode(nodeIndex, parentWorld) {
@@ -54,6 +56,7 @@
         );
       }
 
+      if (jointScales && jointScales[nodeIndex] !== 1) sceneAnimScaleFrame(local, jointScales[nodeIndex]);
       var world = parentWorld ? sceneMat4Multiply(parentWorld, local) : local;
       _nodeTransforms.set(nodeIndex, world);
 
@@ -82,6 +85,12 @@
     }
 
     return _nodeTransforms;
+  }
+
+  // Scales the three axis columns of a local matrix by f: the same as
+  // multiplying the node's scale by f.
+  function sceneAnimScaleFrame(local: Float32Array, f: number) {
+    for (var c = 0; c < 11; c++) if ((c & 3) !== 3) local[c] *= f;
   }
 
   // Compute per-joint skinning matrices from the current animation pose.
@@ -1163,6 +1172,9 @@
           }
         }
       }
+      // The model's own joint scales scale the composed local frame, as the
+      // general walk does, so both paths stay bit-equal.
+      var own = record.jointScales;
       var root = record.rootTransform || null;
       for (var oi = 0; oi < st.order.length; oi++) {
         var ni = st.order[oi], f = st.flags[ni];
@@ -1177,6 +1189,7 @@
           for (var b = 0; b < 4; b++) st.rS[b] = (f & 2) ? st.r[ni * 4 + b] : st.authR[ni * 4 + b];
           sceneTRSToMat4Into(local, st.tS, st.rS, st.sS);
         }
+        if (own && own[ni] !== 1) sceneAnimScaleFrame(local, own[ni]);
         var pi = st.parent[ni];
         if (pi >= 0) sceneMat4MultiplyInto(st.world[ni], st.world[pi], local);
         else if (root) sceneMat4MultiplyInto(st.world[ni], root, local);

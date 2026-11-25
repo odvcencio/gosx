@@ -34,6 +34,12 @@ var (
 	ErrSaveCorrupt = errors.New("game: save is corrupt")
 	// ErrSaveTooNew means the save was written by a newer build.
 	ErrSaveTooNew = errors.New("game: save is from a newer version")
+	// ErrSaveUnreadable means the store cannot be read at all (private
+	// browsing, storage disabled); the error wraps the store's own.
+	ErrSaveUnreadable = errors.New("game: save storage cannot be read")
+	// ErrSaveConflict means the slot changed since the caller loaded it, for
+	// example in another tab (SaveBytesIfSeq).
+	ErrSaveConflict = errors.New("game: save changed since it was loaded")
 )
 
 // SaveMigration upgrades a payload from version From to From+1.
@@ -110,24 +116,29 @@ func validName(name string) bool {
 }
 
 // read returns the envelope of one copy, or ok=false when it is absent,
-// torn, or fails its checksum.
-func (s *SlotStore) read(name string, copy int) (slotEnvelope, bool, bool) {
-	raw, present := s.cfg.Store.Get(s.key(name, copy))
+// torn, or fails its checksum. err is set when the store cannot be read.
+func (s *SlotStore) read(name string, copy int) (env slotEnvelope, ok, present bool, err error) {
+	raw, present, err := s.cfg.Store.Read(s.key(name, copy))
+	if err != nil {
+		return slotEnvelope{}, false, false, fmt.Errorf("%w: %w", ErrSaveUnreadable, err)
+	}
 	if !present {
-		return slotEnvelope{}, false, false
+		return slotEnvelope{}, false, false, nil
 	}
-	var env slotEnvelope
-	if err := json.Unmarshal([]byte(raw), &env); err != nil || env.Format != SlotFormat || env.Sum != sumOf(env.Payload) {
-		return slotEnvelope{}, false, true
+	if json.Unmarshal([]byte(raw), &env) != nil || env.Format != SlotFormat || env.Sum != sumOf(env.Payload) {
+		return slotEnvelope{}, false, true, nil
 	}
-	return env, true, true
+	return env, true, true, nil
 }
 
 // newest returns the valid envelope with the highest sequence, which copy
 // holds it, and whether any copy was present at all.
-func (s *SlotStore) newest(name string) (env slotEnvelope, copy int, found, present bool) {
+func (s *SlotStore) newest(name string) (env slotEnvelope, copy int, found, present bool, err error) {
 	for c := 0; c < 2; c++ {
-		e, ok, pres := s.read(name, c)
+		e, ok, pres, readErr := s.read(name, c)
+		if readErr != nil {
+			return slotEnvelope{}, 0, false, false, readErr
+		}
 		present = present || pres
 		if ok && (!found || e.Seq > env.Seq) {
 			env, copy, found = e, c, true
@@ -139,19 +150,40 @@ func (s *SlotStore) newest(name string) (env slotEnvelope, copy int, found, pres
 // SaveBytes writes payload (which must be valid JSON) to the slot. label is
 // free text for a load screen, such as a level name.
 func (s *SlotStore) SaveBytes(name string, kind SaveKind, label string, payload []byte) error {
+	_, err := s.save(name, kind, label, payload, nil)
+	return err
+}
+
+// SaveBytesIfSeq is SaveBytes that writes only when the slot's newest save
+// still has sequence number seq (the SlotInfo.Seq the caller loaded, or 0
+// for a slot that had no save). Otherwise it writes nothing and returns
+// ErrSaveConflict: another tab, say, has saved since. It returns the new
+// save's sequence number.
+func (s *SlotStore) SaveBytesIfSeq(name string, seq uint64, kind SaveKind, label string, payload []byte) (uint64, error) {
+	return s.save(name, kind, label, payload, &seq)
+}
+
+func (s *SlotStore) save(name string, kind SaveKind, label string, payload []byte, expect *uint64) (uint64, error) {
 	if s == nil || s.cfg.Store == nil {
-		return storage.ErrNoBackend
+		return 0, storage.ErrNoBackend
 	}
 	if !validName(name) {
-		return fmt.Errorf("game: bad save slot name %q", name)
+		return 0, fmt.Errorf("game: bad save slot name %q", name)
 	}
 	if !json.Valid(payload) {
-		return errors.New("game: save payload is not valid JSON")
+		return 0, errors.New("game: save payload is not valid JSON")
 	}
-	cur, curCopy, found, _ := s.newest(name)
+	cur, curCopy, found, _, err := s.newest(name)
+	if err != nil {
+		// Never write over saves that cannot be read.
+		return 0, err
+	}
 	target, seq := 0, uint64(1)
 	if found {
 		target, seq = 1-curCopy, cur.Seq+1
+	}
+	if expect != nil && seq-1 != *expect {
+		return 0, ErrSaveConflict
 	}
 	env := slotEnvelope{
 		Format: SlotFormat, Seq: seq, Kind: kind, Version: s.cfg.Version, Label: label,
@@ -159,9 +191,12 @@ func (s *SlotStore) SaveBytes(name string, kind SaveKind, label string, payload 
 	}
 	data, err := json.Marshal(env)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return s.cfg.Store.Set(s.key(name, target), string(data))
+	if err := s.cfg.Store.Set(s.key(name, target), string(data)); err != nil {
+		return 0, err
+	}
+	return seq, nil
 }
 
 // Save encodes v as JSON and writes it to the slot.
@@ -179,7 +214,10 @@ func (s *SlotStore) LoadBytes(name string) ([]byte, SlotInfo, error) {
 	if s == nil || s.cfg.Store == nil {
 		return nil, SlotInfo{}, ErrNoSave
 	}
-	env, _, found, present := s.newest(name)
+	env, _, found, present, err := s.newest(name)
+	if err != nil {
+		return nil, SlotInfo{}, err
+	}
 	if !found {
 		if present {
 			return nil, SlotInfo{}, ErrSaveCorrupt
@@ -233,8 +271,8 @@ func (s *SlotStore) Info(name string) (SlotInfo, bool) {
 	if s == nil || s.cfg.Store == nil {
 		return SlotInfo{}, false
 	}
-	env, _, found, _ := s.newest(name)
-	if !found {
+	env, _, found, _, err := s.newest(name)
+	if err != nil || !found {
 		return SlotInfo{}, false
 	}
 	return infoOf(name, env), true

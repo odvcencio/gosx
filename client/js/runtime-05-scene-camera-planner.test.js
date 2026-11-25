@@ -282,9 +282,9 @@ test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => 
 
   assert.match(webgl, /scenePBRViewMatrix\(cam, scratchViewMatrix\)/);
   assert.match(webgl, /gl\.uniformMatrix4fv\(uniforms\.viewMatrix, false, viewMatrix\)/);
-  assert.match(webgpu, /scenePBRViewMatrix\(cam, scratchViewMatrix\)/);
-  assert.match(webgpu, /f\.set\(scratchViewMatrix, 0\)/);
-  assert.match(webgpu, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, scratchProjMatrix, scratchViewMatrix\)/);
+  assert.match(webgpu, /scenePBRViewMatrix\(cam, uniformState\.scratchViewMatrix\)/);
+  assert.match(webgpu, /f\.set\(uniformState\.scratchViewMatrix, 0\)/);
+  assert.match(webgpu, /sceneMat4MultiplyInto\(uniformState\.scratchSelenaViewProjection, uniformState\.scratchProjMatrix, uniformState\.scratchViewMatrix\)/);
 });
 
 test("bootstrap Scene3D PBR cameraPos uniforms use world eye position", () => {

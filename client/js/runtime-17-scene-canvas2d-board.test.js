@@ -338,15 +338,15 @@ test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D 
 
   const orthoGate = body.indexOf('camera.mode === "ortho2d"');
   const normalizer = body.indexOf("sceneRenderCamera(camera)");
-  const depthRemap = body.indexOf("scratchProjMatrix[2]");
+  const depthRemap = body.indexOf("uniformState.scratchProjMatrix[2]");
   assert.notEqual(orthoGate, -1, "uploadFrameUniforms must gate on camera.mode === \"ortho2d\"");
   assert.notEqual(normalizer, -1, "the 3D path must still normalize through sceneRenderCamera");
   assert.ok(
     orthoGate < normalizer,
     "the ortho-2D branch must precede sceneRenderCamera — the normalizer strips mode and applies 3D defaults (z→6, near→0.05, far→128), silently mangling 2D cameras",
   );
-  assert.match(body, /sceneMat4Ortho2DView\(camera,\s*scratchViewMatrix\)/);
-  assert.match(body, /sceneMat4Ortho2DProj\(camera,\s*width,\s*height,\s*scratchProjMatrix\)/);
+  assert.match(body, /sceneMat4Ortho2DView\(camera,\s*uniformState\.scratchViewMatrix\)/);
+  assert.match(body, /sceneMat4Ortho2DProj\(camera,\s*width,\s*height,\s*uniformState\.scratchProjMatrix\)/);
   // The ortho proj is emitted in WebGL convention (z in [-1,1], matching the
   // native golden) and must still flow through the WebGPU depth remap.
   assert.notEqual(depthRemap, -1, "WebGL→WebGPU depth remap must remain");

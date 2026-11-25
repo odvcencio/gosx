@@ -22,7 +22,11 @@ const FrameMagic = "GSA2"
 //	    u16 length + UTF-8 model ID
 //	    u32 rig hash (Program.RigHash; 0 means no rig)
 //	    f32 seconds since this model's previous frame (drives smoothing)
-//	    u8  flags: bits 0-1 joint detail level (LODLevel.Detail)
+//	    u8  flags: bits 0-1 joint detail level (LODLevel.Detail),
+//	        bit 2 root placement follows, bit 3 placement only
+//	    [f32 x3 root position, f32 root yaw]  (flags bit 2)
+//	    With flags bit 3 the model's entry ends here: the renderer keeps
+//	    the model's last pose and only moves it.
 //	    u8  layer count, then per layer:
 //	        f32 layer weight
 //	        u8  sample count, then per sample (11 bytes):
@@ -70,6 +74,12 @@ func (e *FrameEncoder) Encode(models ...*Instance) ([]byte, error) {
 		}
 		e.seen[in.id] = struct{}{}
 		size += 2 + len(in.id) + 4 + 4 + 4
+		if in.hasRoot {
+			size += 16
+		}
+		if in.placementOnly() {
+			continue
+		}
 		for li := range in.layers {
 			ls := &in.layers[li]
 			size += 5 + ls.sampleCount*11
@@ -118,9 +128,23 @@ func (e *FrameEncoder) appendModel(out []byte, in *Instance, models []*Instance)
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(in.id)))
 	out = append(out, in.id...)
 	out = binary.LittleEndian.AppendUint32(out, in.prog.rigHash)
+	flags := in.lod.detail & 3
+	if in.hasRoot {
+		flags |= frameFlagRoot
+	}
+	if in.placementOnly() {
+		// The pose is not due this frame. Keep the time since the last pose
+		// for the frame that does carry one.
+		out = appendF32(out, 0)
+		out = append(out, flags|frameFlagPlacementOnly)
+		return appendRoot(out, in.root)
+	}
 	out = appendF32(out, in.sinceEncode)
 	in.sinceEncode = 0
-	out = append(out, in.lod.detail&3)
+	out = append(out, flags)
+	if in.hasRoot {
+		out = appendRoot(out, in.root)
+	}
 	out = append(out, byte(len(in.layers)))
 	for li := range in.layers {
 		ls := &in.layers[li]
@@ -199,6 +223,21 @@ func (e *FrameEncoder) appendModel(out []byte, in *Instance, models []*Instance)
 	}
 	out[countAt] = byte(count)
 	return out
+}
+
+// Model flag bits above the joint detail level.
+const (
+	frameFlagRoot          = 1 << 2
+	frameFlagPlacementOnly = 1 << 3
+)
+
+// placementOnly reports whether this frame sends the instance's root alone:
+// a level-of-detail schedule held its pose this frame and it has a root to
+// keep moving.
+func (in *Instance) placementOnly() bool { return in.lod.hold && in.hasRoot }
+
+func appendRoot(out []byte, p Pose) []byte {
+	return appendF32(appendF32(appendF32(appendF32(out, p.X), p.Y), p.Z), p.Yaw)
 }
 
 func (e *FrameEncoder) nameIndex(name string) int {

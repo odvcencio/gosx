@@ -53,6 +53,20 @@ func (p *PadPoller) Poll(source host.GamepadSource, sink Sink) {
 	if source == nil || sink == nil {
 		return
 	}
+	p.PollStates(source.Gamepads(), sink)
+}
+
+// PollStates feeds sink the changes in one poll's pads, read once by the
+// caller, so that the poller, a hand tracker and a seats layer all work on
+// the same snapshot. A pad that is gone, or that shows another id in its
+// slot, has everything it held released, and each of those releases is
+// Canceled: the player did not let go. A button or axis that is no longer
+// in a pad's list is released the same way. The poller does not keep the
+// states' slices.
+func (p *PadPoller) PollStates(pads []host.GamepadState, sink Sink) {
+	if sink == nil {
+		return
+	}
 	dz := p.Deadzone
 	if dz <= 0 {
 		dz = 0.15
@@ -60,7 +74,7 @@ func (p *PadPoller) Poll(source host.GamepadSource, sink Sink) {
 	for k := range p.seen {
 		delete(p.seen, k)
 	}
-	for _, pad := range source.Gamepads() {
+	for _, pad := range pads {
 		if !p.AllowNonStandard && pad.Mapping != "standard" {
 			continue
 		}
@@ -96,31 +110,43 @@ func (p *PadPoller) Poll(source host.GamepadSource, sink Sink) {
 func (p *PadPoller) release(device string, mem *padMemory, sink Sink) {
 	for i, v := range mem.buttons {
 		if v != 0 && i < maxPadInputs {
-			sink.Feed(Event{Device: device, Source: Source{KindPadButton, padButtonCodes[i]}})
+			sink.Feed(Event{Device: device, Source: Source{KindPadButton, padButtonCodes[i]}, Canceled: true})
 		}
 	}
 	for i, v := range mem.axes {
 		if v != 0 && i < maxPadInputs {
-			sink.Feed(Event{Device: device, Source: Source{KindPadAxis, padAxisCodes[i]}})
+			sink.Feed(Event{Device: device, Source: Source{KindPadAxis, padAxisCodes[i]}, Canceled: true})
 		}
 	}
 	mem.buttons, mem.axes = mem.buttons[:0], mem.axes[:0]
 }
 
+// diff feeds the inputs that changed and returns what the sink now holds.
+// A change smaller than padEpsilon is not sent and not kept, so a slow
+// ramp still arrives once it has moved far enough, and a value that comes
+// to rest (0) or to full (1) is always sent exactly.
 func (p *PadPoller) diff(device string, kind Kind, codes []string, prev []float64, next []float64, sink Sink) []float64 {
-	for i, v := range next {
-		if i >= maxPadInputs {
-			break
-		}
-		old := 0.0
-		if i < len(prev) {
-			old = prev[i]
-		}
-		if math.Abs(v-old) >= padEpsilon {
-			sink.Feed(Event{Device: device, Source: Source{kind, codes[i]}, Value: v})
+	n := min(len(next), maxPadInputs)
+	for i := n; i < len(prev); i++ {
+		if prev[i] != 0 {
+			sink.Feed(Event{Device: device, Source: Source{kind, codes[i]}, Canceled: true})
 		}
 	}
-	return append(prev[:0], next...)
+	for len(prev) < n {
+		prev = append(prev, 0)
+	}
+	prev = prev[:n]
+	for i, v := range next[:n] {
+		old := prev[i]
+		if v == old {
+			continue
+		}
+		if math.Abs(v-old) >= padEpsilon || v == 0 || v == 1 || v == -1 {
+			sink.Feed(Event{Device: device, Source: Source{kind, codes[i]}, Value: v})
+			prev[i] = v
+		}
+	}
+	return prev
 }
 
 func radial(x, y, dz float64) (float64, float64) {

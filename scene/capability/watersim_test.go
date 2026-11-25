@@ -87,10 +87,10 @@ func TestWaterSimWebGPURunsTheSameFiveStages(t *testing.T) {
 	}
 	webgpu := readRenderer(t, webgpuRendererPath)
 	for _, symbol := range []string{
-		"function dispatchWaterComputeStage(encoder, system, entry, stage, fallbackPipeline, sharedPass) {",
+		"function dispatchWaterComputeStage(encoder, system, entry, stage, fallbackPipeline, sharedPass, waterState: any, device: any) {",
 		`encoder.beginComputePass({ label: "gosx-water-sim-normal-pass" })`,
-		`dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline, waterSimPass)`,
-		`dispatchWaterComputeStage(encoder, system, entry, "normal", normalCompute.pipeline, waterSimPass)`,
+		`dispatchWaterComputeStage(encoder, system, entry, "simulation", simulationCompute.pipeline, waterSimPass, waterState, device)`,
+		`dispatchWaterComputeStage(encoder, system, entry, "normal", normalCompute.pipeline, waterSimPass, waterState, device)`,
 	} {
 		if !strings.Contains(webgpu, symbol) {
 			t.Errorf("Matrix[water-simulation][webgpu] is true but %q is missing from %s; "+

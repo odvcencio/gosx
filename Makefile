@@ -387,17 +387,17 @@ build-wasm-all:
 	GOOS=js GOARCH=wasm $(GO) build ./...
 
 test-wasm:
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
-	GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
+	GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
+	GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
+	GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
 	# Every game package, tests included: build-wasm-all compiles no test files,
 	# so a server-only helper (sim.New, a hub) in a game test would otherwise
 	# break the browser build of game unnoticed.
 	GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/...
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/browser ./internal/browserdom ./internal/jsreentry ./hub/socket ./engine/wasm ./netplay/client
+	GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/browser ./internal/browserdom ./internal/jsreentry ./hub/socket ./engine/wasm ./netplay/client
 	# TestBakeShorelineTexelsMatchAcrossEncodings runs here to prove the browser's
 	# uncompressed shoreline PNG decodes to the same texels as the native one.
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface|FrameRejection|DecalPoolPublish|BakeShorelineTexels)'
+	GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|CameraWriter|StartParticleBurst|Surface|FrameRejection|DecalPoolPublish|BakeShorelineTexels)'
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm

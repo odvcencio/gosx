@@ -6,7 +6,7 @@ func TestGPUBackendsDrawTheOcean(t *testing.T) {
 	webgpu := readRenderer(t, webgpuRendererPath)
 	webgl := readRenderer(t, webglRendererPath)
 	evidenceFor(t, FeatureOcean, BackendWebGPU).
-		needs(webgpuRendererPath, webgpu, "WGSL_SCENE_OCEAN", "wgpuCreateOceanRenderer", "wgpuOceanDraw(oceanResources, mainPass, oceanOpts)").
+		needs(webgpuRendererPath, webgpu, "WGSL_SCENE_OCEAN", "wgpuCreateOceanRenderer", "wgpuOceanDraw(s.oceanResources, mainPass, oceanOpts)").
 		assertAgrees("WebGPU draws the ocean in the main pass after opaque geometry")
 	evidenceFor(t, FeatureOcean, BackendWebGL).
 		needs(webglRendererPath, webgl, "SCENE_OCEAN_VERTEX_GLSL", "createSceneOceanWebGLRenderer", "sceneOceanWebGLDraw(oceanResources, gl,").

@@ -22,9 +22,11 @@ const (
 )
 
 // MotionBlur blurs the scene along per-pixel motion. It is opt-in: add it to
-// PostFX.Effects. It reads the renderer's motion vectors (camera motion, rigid
-// bodies and skinned meshes), so it blurs a moving object along its path and a
-// turning camera across the whole view.
+// PostFX.Effects. On WebGPU it reads the renderer's motion vectors (camera
+// motion, retained meshes and skinned meshes), so it blurs a moving object along
+// its path and a turning camera across the whole view. On WebGL2 only the camera
+// blurs: the renderer has no per-object velocity, so a moving object seen by a
+// still camera stays sharp. capability.Fidelity records both.
 //
 // A pass finds the largest velocity in each screen tile, spreads it to the
 // neighbor tiles, then gathers samples along each pixel's own velocity,

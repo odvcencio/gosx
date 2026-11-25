@@ -181,7 +181,7 @@ lists every field and rule.
 | `geo.uv` | First UV set. |
 | `geo.tangent`, `geo.bitangent` | Mesh tangent frame, not normalized; zero when the mesh has no tangents. |
 | `geo.viewDir` | Unit vector toward the camera. |
-| `geo.color` | Instance or vertex color; the renderer already multiplies the base color by its rgb. |
+| `geo.color` | Instance or vertex color. The renderer multiplies the base color by its rgb unless the hook reads `geo.color`; a hook that reads it owns the instance color. |
 
 Textures:
 

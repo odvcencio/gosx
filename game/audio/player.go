@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"m31labs.dev/gosx/game"
+	audiohost "m31labs.dev/gosx/game/audio/host"
 )
 
 // ErrNoLoader is returned when a clip needs decoding but the Player has no
@@ -175,6 +176,37 @@ func (p *Player) Stop(handle string) {
 		return
 	}
 	voice.source.Stop(p.host.CurrentTime())
+}
+
+// FadeOut lowers the voice for handle to silence over seconds and stops it
+// when the fade ends, so music can end without a click: a band that must be
+// quiet by the snap fades in a third of a second instead of cutting off. A
+// host whose gain cannot be automated stops the voice at once. Seconds of
+// zero or less, an unknown handle or a finished one behave as Stop.
+func (p *Player) FadeOut(handle string, seconds float64) {
+	p.mu.Lock()
+	voice, ok := p.playing[handle]
+	p.mu.Unlock()
+	if !ok {
+		return
+	}
+	now := p.host.CurrentTime()
+	if seconds > 0 {
+		if gain, ok := voice.gain.(AutomatedGainNode); ok {
+			param := gain.Gain()
+			if param.HoldAt(now) == nil && param.LinearRamp(0, now+seconds) == nil {
+				voice.source.Stop(now + seconds)
+				return
+			}
+		}
+		// A target ramp settles to about 2 % of the start in four time
+		// constants.
+		if audiohost.SetGainTarget(voice.gain, 0, now, seconds/4) == nil {
+			voice.source.Stop(now + seconds)
+			return
+		}
+	}
+	voice.source.Stop(now)
 }
 
 // StopAll ends every currently playing voice.

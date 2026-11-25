@@ -76,6 +76,76 @@ for (const stageConstants of [true, false]) {
 
 }
 
+// A Selena mesh with an identity transform is retained: its vertices stay in
+// its own buffers and never enter the world-baked streams. The main pass must
+// draw it from those buffers. It used to bind the world-baked streams at the
+// record's vertexOffset (0), so the mesh drew another object's first vertices
+// and vanished (the stadium pennants). The second box is moved, so it is
+// world-baked and the baked streams are not empty.
+test("WebGPU draws a retained Selena mesh from its own vertex buffers", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      materials: [{
+        name: "height-displace", kind: "custom", shaderBackend: "selena",
+        customVertex: fixture.glslVertex, customFragment: fixture.glslFragment,
+        customVertexWGSL: fixture.wgsl, customFragmentWGSL: fixture.wgsl, shaderLayout: fixture.layout,
+        customUniforms: { heightMap: "/height.png", tint: "/tint.png", scale: 0.25, lod: 0 },
+      }],
+      objects: [
+        { id: "retained", kind: "box", width: 1, height: 1, depth: 1, x: 0, y: 0, z: 0, material: "height-displace", wireframe: false },
+        { id: "baked", kind: "box", width: 1, height: 1, depth: 1, x: 2, y: 0, z: 0, material: "height-displace", wireframe: false },
+      ],
+    },
+  }, { tier: "full" });
+  const bundle = api.createSceneRenderBundle(64, 64, "#000000", { x: 0, y: 0, z: 6, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false, { retainedGeometry: true });
+  const retained = bundle.meshObjects.find((o) => o.id === "retained");
+  assert.ok(retained && retained.retainedGeometry && retained.directVertices, "the box at the origin is retained");
+  assert.ok(bundle.meshObjects.some((o) => o.id === "baked" && !o.retainedGeometry), "the moved box is world-baked");
+
+  // Snapshot the bound vertex buffers at every draw.
+  const draws = [];
+  const createEncoder = harness.fake.device.createCommandEncoder;
+  harness.fake.device.createCommandEncoder = function(...args) {
+    const encoder = createEncoder.apply(this, args);
+    const begin = encoder.beginRenderPass;
+    encoder.beginRenderPass = function(...passArgs) {
+      const pass = begin.apply(this, passArgs);
+      const bound = {};
+      let pipeline = null;
+      const setPipeline = pass.setPipeline, setVertexBuffer = pass.setVertexBuffer, drawIndexed = pass.drawIndexed, draw = pass.draw;
+      pass.setPipeline = function(p) { pipeline = p; return setPipeline.apply(this, arguments); };
+      pass.setVertexBuffer = function(slot, buffer, offset, size) { bound[slot] = { buffer, offset: offset || 0, size }; return setVertexBuffer.apply(this, arguments); };
+      pass.drawIndexed = function(indexCount) { draws.push({ indexCount, pipeline, bound: Object.assign({}, bound) }); return drawIndexed.apply(this, arguments); };
+      pass.draw = function(vertexCount) { draws.push({ vertexCount, pipeline, bound: Object.assign({}, bound) }); return draw.apply(this, arguments); };
+      return pass;
+    };
+    return encoder;
+  };
+  for (let frame = 0; frame < 3; frame++) {
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 16, active: true });
+    await flushAsyncWork();
+  }
+
+  // Both boxes share the pipeline; the baked one reads world positions, two
+  // units along x from the retained box's own.
+  const selena = draws.filter((d) => d.pipeline && String(d.pipeline.desc && d.pipeline.desc.label || "").indexOf("gosx-selena-") === 0);
+  assert.ok(selena.length > 0, "the Selena boxes are drawn");
+  const positionSlot = fixture.layout.attributes.findIndex((a) => a.name === "position");
+  const want = JSON.stringify(Array.from(retained.vertices.positions.subarray(0, retained.vertexCount * 3)));
+  const read = selena.map((draw) => {
+    const slot = draw.bound[positionSlot];
+    const write = slot && harness.fake.state.writeBufferCalls.filter((c) => c.buffer === slot.buffer).at(-1);
+    if (!write) return "";
+    const data = new Float32Array(write.data.buffer, write.data.byteOffset, write.data.byteLength / 4);
+    return JSON.stringify(Array.from(data.subarray(slot.offset / 4, slot.offset / 4 + retained.vertexCount * 3)));
+  });
+  assert.ok(read.includes(want), "a draw reads the retained box's own positions");
+  harness.renderer.dispose();
+});
+
 // Renders one Selena mesh with the vertex-texture fixture on a fake WebGL2
 // context that reports `vertexUnits` for MAX_VERTEX_TEXTURE_IMAGE_UNITS, and
 // returns the GLSL sources the renderer handed to the driver.

@@ -176,28 +176,56 @@ function sceneCrowdGLShader(gl: any, type: number, source: string): any {
 // source. The renderer's hook answers o.fragment(material) with the PBR
 // fragment that material needs (a Selena surface material splices its
 // surface in), so fans and props share a program when their materials do.
-function sceneCrowdGLProgram(res: any, gl: any, o: any, tier: number, material: any): any {
+// With start set it only compiles and links, without waiting for the driver:
+// the link is checked, and the uniforms read, on the program's first use.
+function sceneCrowdGLProgram(res: any, gl: any, o: any, tier: number, material: any, start = false): any {
   const pbr = typeof o.fragment === "function" ? o.fragment(material) : o.fragment;
   const key = tier + "|" + String(pbr || "");
-  if (res.programs.has(key)) return res.programs.get(key);
-  const vertex = sceneCrowdGLShader(gl, gl.VERTEX_SHADER, SCENE_CROWD_GLSL_VERTEX.replace("precision highp int;", "precision highp int;\n#define CROWD_TIER " + tier));
-  const fragment = sceneCrowdGLShader(gl, gl.FRAGMENT_SHADER, sceneCrowdFragmentGLSL(String(pbr || "")));
-  const program = gl.createProgram();
-  gl.attachShader(program, vertex); gl.attachShader(program, fragment);
-  gl.linkProgram(program);
-  gl.deleteShader(vertex); gl.deleteShader(fragment);
+  let entry = res.programs.get(key);
+  if (entry && entry.uniforms) return entry;
+  if (!entry) {
+    const vertex = sceneCrowdGLShader(gl, gl.VERTEX_SHADER, SCENE_CROWD_GLSL_VERTEX.replace("precision highp int;", "precision highp int;\n#define CROWD_TIER " + tier));
+    const fragment = sceneCrowdGLShader(gl, gl.FRAGMENT_SHADER, sceneCrowdFragmentGLSL(String(pbr || "")));
+    const program = gl.createProgram();
+    gl.attachShader(program, vertex); gl.attachShader(program, fragment);
+    gl.linkProgram(program);
+    gl.deleteShader(vertex); gl.deleteShader(fragment);
+    entry = { program, uniforms: null };
+    res.programs.set(key, entry);
+  }
+  if (start) return entry;
+  const program = entry.program;
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
     const log = gl.getProgramInfoLog(program);
     gl.deleteProgram(program);
+    res.programs.delete(key);
     throw new Error("crowd program: " + log);
   }
   const uniforms = typeof o.uniforms === "function" ? o.uniforms(gl, program) : {};
   uniforms.crowd = gl.getUniformLocation(program, "u_crowd[0]") || gl.getUniformLocation(program, "u_crowd");
   uniforms.crowdPalette = gl.getUniformLocation(program, "u_crowdPalette");
   uniforms.crowdSections = gl.getUniformLocation(program, "u_crowdSections");
-  const entry = { program, uniforms };
-  res.programs.set(key, entry);
+  entry.uniforms = uniforms;
   return entry;
+}
+
+// sceneCrowdGLWarm starts compiling every level of detail's programs, so the
+// full level, which usually first appears mid-play, does not compile then. It
+// waits until the crowd has drawn for a second, past the compiles that open a
+// match, and starts one program a frame. It needs KHR_parallel_shader_compile:
+// without it a compile can block, so levels stay compiled on first use.
+function sceneCrowdGLWarm(res: any, gl: any, o: any, gpu: any, materials: any, now: number): void {
+  if (gpu.warmed || !res.parallel) return;
+  if (gpu.warmFrom === undefined) gpu.warmFrom = now;
+  if (now - gpu.warmFrom < 1) return;
+  for (let tier = 0; tier < 3; tier++) {
+    for (const material of gpu.packed.propBlocks ? [materials.fan, materials.props] : [materials.fan]) {
+      const known = res.programs.size;
+      sceneCrowdGLProgram(res, gl, o, tier, material, true);
+      if (res.programs.size > known) return;
+    }
+  }
+  gpu.warmed = true;
 }
 
 function sceneCrowdGLTexture(gl: any, width: number, height: number, data: Float32Array): any {
@@ -307,7 +335,7 @@ function sceneCrowdGLDraw(gl: any, o: any): string {
   }
   let res = sceneCrowdGLResources.get(gl);
   if (!res) {
-    res = { crowds: new Map(), programs: new Map(), ext: gl.getExtension("WEBGL_draw_instanced_base_vertex_base_instance") };
+    res = { crowds: new Map(), programs: new Map(), ext: gl.getExtension("WEBGL_draw_instanced_base_vertex_base_instance"), parallel: gl.getExtension("KHR_parallel_shader_compile") };
     const combined = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS), fragmentUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
     res.units = combined - 4 >= fragmentUnits ? [combined - 4, combined - 3] : [fragmentUnits - 2, fragmentUnits - 1];
     sceneCrowdGLResources.set(gl, res);
@@ -357,6 +385,7 @@ function sceneCrowdGLDraw(gl: any, o: any): string {
           }
         }
       }
+      sceneCrowdGLWarm(res, gl, o, gpu, materials, now);
     }
     for (const id of Array.from(res.crowds.keys())) if (!live.has(id)) { sceneCrowdGLDisposeCrowd(gl, res.crowds.get(id)); res.crowds.delete(id); }
     stats.state = "ready";

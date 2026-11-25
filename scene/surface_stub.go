@@ -60,3 +60,5 @@ func (*Surface) OnFrameSubmitted(func(MountFrameSubmission)) (func(), error) {
 	return nil, errSurfaceBrowser
 }
 func (*Surface) CancelFrameRequest(string) error { return errSurfaceBrowser }
+
+func (*Surface) FrameStats() (FrameStats, error) { return FrameStats{}, errSurfaceBrowser }

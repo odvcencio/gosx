@@ -879,10 +879,10 @@ func TestWaterAtRestGatingEmitsStatsAttr(t *testing.T) {
 		"if ((hasSimulationTick && runWaterSim) || system.stateTextureSyncSeq === 0) {",
 		// Any disturbance (seed/drop/queued object event/continuous drag, all
 		// folded into waterStateDirty) must wake the system instantly.
-		"if (waterStateDirty) {\n            system.waterRestEnergy = 1.0;\n            system.waterLastDisturbanceMS = currentNowMS;\n            system.waterAtRest = false;\n          }",
+		"if (waterStateDirty) {\n          system.waterRestEnergy = 1.0;\n          system.waterLastDisturbanceMS = currentNowMS;\n          system.waterAtRest = false;\n        }",
 		// The DOM/stats surface diag overlays and e2e tests observe.
-		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
-		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
+		`queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
+		`queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
 	} {
 		if !strings.Contains(webgpuSource, want) {
 			t.Fatalf("Scene3D WebGPU water runtime missing at-rest gating source %q", want)
@@ -906,17 +906,17 @@ func TestWaterUniformUploadDedupSkipsUnchangedFrames(t *testing.T) {
 	webgpuSource := readWaterWebGPURuntimeSource(t)
 
 	for _, want := range []string{
-		"function waterUniformSnapshotChanged(system) {",
+		"function waterUniformSnapshotChanged(system, waterState: any) {",
 		"var WATER_UNIFORM_VOLATILE_WORDS = 6;",
-		"if (waterUniformSnapshotChanged(system)) {",
+		"if (waterUniformSnapshotChanged(system, waterState)) {",
 		"device.queue.writeBuffer(system.uniformBuffer, 0, commitUniformData);",
 		"stats.waterUniformUploads += 1;",
 		"stats.waterUniformUploadsSkipped += 1;",
-		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
-		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
+		`queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
+		`queueWebGPUAttribute(telemetryState, "data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
 		// (b): the swapchain-reconfigure dirty check this audit verified
 		// (rather than needing to add).
-		"function configureWebGPUCanvas(canvas) {\n      var target = canvas || (gpuCtx && gpuCtx.canvas) || null;\n      var key = sceneWebGPUSurfaceKey(target);\n      if (key === configuredSurfaceKey) return false;",
+		"function configureWebGPUCanvas(telemetryState: any, device: any, canvas) {\n    var target = canvas || (telemetryState.gpuCtx && telemetryState.gpuCtx.canvas) || null;\n    var key = sceneWebGPUSurfaceKey(telemetryState, device, target);\n    if (key === telemetryState.configuredSurfaceKey) return false;",
 	} {
 		if !strings.Contains(webgpuSource, want) {
 			t.Fatalf("Scene3D WebGPU water runtime missing uniform-upload churn-audit source %q", want)

@@ -29,7 +29,7 @@ import (
 	cdppage "github.com/chromedp/cdproto/page"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
-	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/internal/localapp"
 )
 
@@ -384,7 +384,7 @@ func newBrowserPage(t *testing.T, chrome string, extraFlags map[string]any, widt
 			t.Fatalf("unsupported Chrome flag %q", name)
 		}
 	}
-	browser, err := chrometest.Start(t.Context(), chrome, args...)
+	browser, err := browsertest.Start(t.Context(), chrome, args...)
 	if err != nil {
 		t.Fatalf("start Chrome: %v", err)
 	}

@@ -266,7 +266,7 @@
     "uniform vec3 u_lightGroundColors[8];",
     "",
     // Environment
-    "uniform vec3 u_ambientColor;",
+    "uniform vec3 u_ambientColor; uniform int u_lightModel;",
     "uniform float u_ambientIntensity;",
     "uniform vec3 u_skyColor;",
     "uniform float u_skyIntensity;",
@@ -597,7 +597,7 @@
     // Accumulate direct lighting.
     "    float transmission = clamp(surfaceTransmission, 0.0, 1.0) * (1.0 - metalness);",
     "    GosxLayer gosxLayer = gosxLayerSetup(NoV, roughness, F0, surfaceClearcoat, surfaceClearcoatRoughness);",
-    "    vec3 Lo = vec3(0.0);",
+    "    vec3 Lo = vec3(0.0); vec3 indirectLight = vec3(0.0);",
     "    vec3 specularRadiance = vec3(0.0);",
     "    vec3 specularEnvironment = vec3(0.0);",
     "",
@@ -616,7 +616,7 @@
     "",
     // Ambient light (type 0): add flat contribution, no BRDF.
     "        if (lightType == 0) {",
-    "            Lo += albedo * lightColor * intensity;",
+    "            if (u_lightModel == 1) { indirectLight += lightColor * intensity; } else { Lo += albedo * lightColor * intensity; }",
     "            continue;",
     "        }",
     "",
@@ -624,7 +624,7 @@
     "        if (lightType == 4) {",
     "            float hBlend = N.y * 0.5 + 0.5;",
     "            vec3 hemiColor = mix(u_lightGroundColors[i], lightColor, hBlend);",
-    "            Lo += albedo * hemiColor * intensity;",
+    "            if (u_lightModel == 1) { indirectLight += hemiColor * intensity; } else { Lo += albedo * hemiColor * intensity; }",
     "            continue;",
     "        }",
     "",
@@ -707,7 +707,7 @@
     "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
     "                        + u_skyColor * u_skyIntensity * hemi",
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
-    "        ambient = gosxCoatOver(envDiffuse * albedo * (1.0 - transmission), envDiffuse, NoV, gosxLayer, specularEnvironment);",
+    "        ambient = gosxCoatOver(envDiffuse * albedo * (1.0 - transmission) * (u_lightModel == 1 ? 1.0 - metalness : 1.0), envDiffuse, NoV, gosxLayer, specularEnvironment);",
     "    }",
     "    if (!u_hasEnvMap) {",
     "#if GOSX_HDR_IBL",
@@ -720,6 +720,7 @@
     "        }",
     "#endif",
     "    }",
+    "    if (u_lightModel == 1) { ambient += indirectLight * albedo * (1.0 - metalness) * (1.0 - transmission); }",
     "#if GOSX_HDR_IBL",
     "    ambient *= ambientOcclusion;",
     "    specularEnvironment *= ambientOcclusion;",
@@ -1436,6 +1437,8 @@
         // depth metrics constant must still invalidate the shadow map.
         for (var k = 0; k < 16; k++) h += o.modelMatrix[k] || 0;
       }
+      // A skinned caster's pose moves its shadow without moving its bounds.
+      if (o.skin && o.skin.jointMatrices) h += sceneShadowSkinHash(o.skin.jointMatrices);
       // A crowd batch record holds one matrix; its revision tracks every agent.
       if (o._crowdBatch === true) {
         h += (o.crowdRevision || 0) * 13.0 + (o.instanceCount || 0) * 7.0;
@@ -1446,6 +1449,12 @@
       casterCount++;
     }
     h += casterCount * 17.0;
+    return h;
+  }
+
+  function sceneShadowSkinHash(m: any) {
+    var h = 0;
+    for (var i = 0; i < m.length; i++) h += (m[i] || 0) * ((i % 61) + 1);
     return h;
   }
 
@@ -1519,6 +1528,7 @@
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
       if (!obj.castShadow) continue;
+      if (objectIsSkinned(obj) && drawSceneSkinnedShadowCaster(gl, shadowState, obj, lightMatrix, shadowProgram)) continue;
       if (typeof drawInstancedCaster === "function" && drawInstancedCaster(obj, lightMatrix)) continue;
 
       if (obj.directVertices || (obj._worldBakedUpload && obj._worldBakedUpload.resident === true)) {
@@ -1571,6 +1581,46 @@
     gl.disable(gl.CULL_FACE);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // Skinned casters draw their animated pose: the depth program applies the colour pass's joint palette to the
+  // caster's own streams, bound through the renderer's direct-mesh helpers that shadowState carries. False keeps the
+  // ordinary caster path.
+  function drawSceneSkinnedShadowCaster(gl: any, shadowState: any, obj: any, lightMatrix: any, shadowProgram: any) {
+    if (shadowState.skinnedProgram === undefined) shadowState.skinnedProgram = createSceneSkinnedShadowProgram(gl) || null;
+    var sp = shadowState.skinnedProgram, count = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
+    if (!sp || !scenePBRPassReady(gl, sp) || count <= 0 || typeof shadowState.attribute !== "function") return false;
+    gl.useProgram(sp.program);
+    gl.uniformMatrix4fv(sp.uniforms.lightViewProjection, false, lightMatrix);
+    gl.uniformMatrix4fv(sp.uniforms.modelMatrix, false, obj.modelMatrix || SHADOW_IDENTITY_MODEL_MATRIX);
+    sceneUploadSkinJoints(gl, sp.uniforms, obj.skin);
+    var streams: any[] = [["position", "positions", 3], ["joints", "joints", 4], ["weights", "weights", 4]];
+    var bound = streams.every(function(stream: any) {
+      return shadowState.attribute(obj, stream[1], sp.attributes[stream[0]], stream[2], shadowState.data(obj.vertices, stream[1], count, stream[2]));
+    });
+    if (bound) {
+      var indexCount = shadowState.indices(obj);
+      gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
+      if (indexCount > 0) gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_INT, 0);
+      else gl.drawArrays(gl.TRIANGLES, 0, count);
+      gl.frontFace(gl.CCW);
+    }
+    if (sp.attributes.joints >= 0) gl.disableVertexAttribArray(sp.attributes.joints);
+    if (sp.attributes.weights >= 0) gl.disableVertexAttribArray(sp.attributes.weights);
+    gl.useProgram(shadowProgram.program);
+    return bound;
+  }
+
+  // The depth program of skinned casters: the shadow vertex shader with the joint palette.
+  function createSceneSkinnedShadowProgram(gl: any) {
+    var skin = "(a_weights.x * gosxJointMatrix(int(a_joints.x)) + a_weights.y * gosxJointMatrix(int(a_joints.y)) + a_weights.z * gosxJointMatrix(int(a_joints.z)) + a_weights.w * gosxJointMatrix(int(a_joints.w)))";
+    var source = SCENE_SHADOW_VERTEX_SOURCE.replace("void main() {", "in vec4 a_joints;\nin vec4 a_weights;\n" + SCENE_GLSL_JOINT_PALETTE + "\nvoid main() {")
+      .replace("(u_modelMatrix * vec4", "(u_modelMatrix * " + skin + " * vec4");
+    return scenePBRCreateShaderProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Skinned shadow shader", function(program: any, vertexShader: any, fragmentShader: any) {
+      var uniforms = scenePBRProgramLocations(gl, program, "lightViewProjection modelMatrix jointTexture jointTexCount");
+      uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
+      return { program, vertexShader, fragmentShader, attributes: scenePBRProgramLocations(gl, program, "position joints weights", true), uniforms };
+    });
   }
 
   // Compile the shadow depth shader program.
@@ -1658,6 +1708,7 @@
     "uniform float u_exposure;",
     "uniform vec4 u_background;",
     "uniform int u_toneMapMode;",
+    "uniform float u_toneContrast;",
     "out vec4 fragColor;",
     "",
     "vec3 aces(vec3 x) {",
@@ -1678,6 +1729,14 @@
     "    return clamp((x * (6.2 * x + 0.5)) / (x * (6.2 * x + 1.7) + 0.06), 0.0, 1.0);",
     "}",
     "",
+    // Uchimura's tone curve, as in the WebGPU pass (webgpu.ts gtCurve).
+    "vec3 gtCurve(vec3 x, float a) {",
+    "    float l0 = 0.78 * 0.4 / a; float s0 = 0.22 + l0; float s1 = 0.22 + a * l0;",
+    "    vec3 w0 = vec3(1.0) - smoothstep(0.0, 0.22, x); vec3 w2 = step(vec3(s0), x); vec3 w1 = vec3(1.0) - w0 - w2;",
+    "    vec3 toe = 0.22 * pow(max(x, vec3(0.0)) / 0.22, vec3(1.33)); vec3 shoulder = vec3(1.0) - (1.0 - s1) * exp(-a / (1.0 - s1) * (x - vec3(s0)));",
+    "    return clamp(toe * w0 + (vec3(0.22) + a * (x - vec3(0.22))) * w1 + shoulder * w2, 0.0, 1.0);",
+    "}",
+    "",
     "void main() {",
     "    vec4 texColor = texture(u_texture, v_uv);",
     "    if (u_background.a >= 0.0 && texColor.a == 0.0) { fragColor = u_background; return; }",
@@ -1689,6 +1748,11 @@
     "        color = reinhard(color);",
     "    } else if (u_toneMapMode == 3) {",
     "        color = filmic(color);",
+    "    } else if (u_toneMapMode == 5) {",
+    "        color = gtCurve(color, max(u_toneContrast, 0.01));",
+    "        color = mix(1.055 * pow(color, vec3(1.0 / 2.4)) - 0.055, color * 12.92, vec3(lessThanEqual(color, vec3(0.0031308))));",
+    "        fragColor = vec4(color + vec3(fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0, texColor.a);",
+    "        return;",
     "    } else {",
     "        color = aces(color);",
     "    }",
@@ -4281,6 +4345,17 @@
 
   function sceneWebGLDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webglRun(state, effect, i, ...rest) : rest[0]; }
   function sceneWebGLDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
+  // The WebGL2 post chain's tone mapping name to u_toneMapMode (no closure state).
+  function scenePostToneMapMode(mode) {
+    if (typeof mode === "string") {
+      var normalized = mode.trim().toLowerCase();
+      if (normalized === "linear" || normalized === "none") return 0;
+      if (normalized === "reinhard") return 2;
+      if (normalized === "filmic") return 3;
+      if (normalized === "gt") return 5;
+    }
+    return 1;
+  }
   function createScenePostProcessor(gl, resolveSelenaUniform) {
 
     var quad = createSceneFullscreenQuad(gl);
@@ -4458,16 +4533,6 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
-    function scenePostToneMapMode(mode) {
-      if (typeof mode === "string") {
-        var normalized = mode.trim().toLowerCase();
-        if (normalized === "linear" || normalized === "none") return 0;
-        if (normalized === "reinhard") return 2;
-        if (normalized === "filmic") return 3;
-      }
-      return 1;
-    }
-
     // Apply the authored tone mapping curve.
     function applyToneMapping(inputTex, effect, targetFBO, w, h) {
       var prog = getProgram("toneMapping", SCENE_POST_TONEMAPPING_SOURCE);
@@ -4475,6 +4540,7 @@
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
       gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_toneMapMode"), scenePostToneMapMode(effect.mode));
+      gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_toneContrast"), sceneNumber(effect.contrast, 1.0));
       gl.uniform4fv(sceneWaterUniformLocation(gl, prog.program, "u_background"), effect.background || [0, 0, 0, -1]);
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
@@ -5074,6 +5140,10 @@
           gl.generateMipmap(gl.TEXTURE_2D);
           record.levels = Math.floor(Math.log2(Math.max(1, image.width, image.height))) + 1;
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          // The extension is queried once per context; the cache key is an expando on gl.
+          if (gl._gosxAniso === undefined) gl._gosxAniso = typeof gl.getExtension === "function" ? gl.getExtension("EXT_texture_filter_anisotropic") : null;
+          var aniso = gl._gosxAniso;
+          if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1));
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         }
@@ -5372,7 +5442,7 @@
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
 
-    var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness specularAA thicknessMap hasThicknessMap metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
+    var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness specularAA thicknessMap hasThicknessMap metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount lightModel ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
       alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
       cut: gl.getUniformLocation(program, "u_cut"),
       specularF0: gl.getUniformLocation(program, "u_specularF0"),
@@ -6886,6 +6956,10 @@
     return result;
   }
 
+  // Environment.LightModel "physical": light and environment colours decode from sRGB to linear.
+  function scenePBRLightColor(cache, color, fallback, physical) { var c = scenePBRCachedLightColor(cache, color, fallback); var lin = function(v) { return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return physical ? [lin(c[0]), lin(c[1]), lin(c[2]), c[3]] : c; }
+  function scenePBRUploadLightModel(gl, uniforms, environment) { const physical = String((environment && environment.lightModel) || "").trim().toLowerCase() === "physical"; if (uniforms.lightModel) gl.uniform1i(uniforms.lightModel, physical ? 1 : 0); return physical; }
+
   function scenePBRUploadLights(gl, uniforms, lights, environment, precomputedHash) {
 
     const contentHash = (typeof precomputedHash === "number")
@@ -6903,7 +6977,7 @@
     // when multiple lights share the same color string within a single frame.
     var colorCache = {};
 
-    gl.uniform1i(uniforms.lightCount, count);
+    gl.uniform1i(uniforms.lightCount, count); const physical = scenePBRUploadLightModel(gl, uniforms, environment);
 
     for (var i = 0; i < count; i++) {
       const light = lightArray[i];
@@ -6938,7 +7012,7 @@
         sceneNumber(light.directionZ, 0)
       );
 
-      var lightColorRGBA = scenePBRCachedLightColor(colorCache, light.color, [1, 1, 1, 1]);
+      var lightColorRGBA = scenePBRLightColor(colorCache, light.color, [1, 1, 1, 1], physical);
       gl.uniform3f(uniforms.lightColors[i], lightColorRGBA[0], lightColorRGBA[1], lightColorRGBA[2]);
       gl.uniform1f(uniforms.lightIntensities[i], sceneNumber(light.intensity, 1));
       gl.uniform1f(uniforms.lightRanges[i], sceneNumber(light.range, 0));
@@ -6947,7 +7021,7 @@
       gl.uniform1f(uniforms.lightPenumbras[i], sceneNumber(light.penumbra, 0));
 
       // Hemisphere ground color (uses color cache).
-      var gcRGBA = scenePBRCachedLightColor(colorCache, light.groundColor, [0, 0, 0, 1]);
+      var gcRGBA = scenePBRLightColor(colorCache, light.groundColor, [0, 0, 0, 1], physical);
       gl.uniform3f(uniforms.lightGroundColors[i], gcRGBA[0], gcRGBA[1], gcRGBA[2]);
     }
 
@@ -6967,15 +7041,15 @@
 
     // Environment uniforms — also use the per-call cache.
     const env = environment || {};
-    var ambientColorRGBA = scenePBRCachedLightColor(colorCache, env.ambientColor, [1, 1, 1, 1]);
+    var ambientColorRGBA = scenePBRLightColor(colorCache, env.ambientColor, [1, 1, 1, 1], physical);
     gl.uniform3f(uniforms.ambientColor, ambientColorRGBA[0], ambientColorRGBA[1], ambientColorRGBA[2]);
     gl.uniform1f(uniforms.ambientIntensity, sceneNumber(env.ambientIntensity, 0));
 
-    var skyColorRGBA = scenePBRCachedLightColor(colorCache, env.skyColor, [0.88, 0.94, 1, 1]);
+    var skyColorRGBA = scenePBRLightColor(colorCache, env.skyColor, [0.88, 0.94, 1, 1], physical);
     gl.uniform3f(uniforms.skyColor, skyColorRGBA[0], skyColorRGBA[1], skyColorRGBA[2]);
     gl.uniform1f(uniforms.skyIntensity, sceneNumber(env.skyIntensity, 0));
 
-    var groundColorRGBA = scenePBRCachedLightColor(colorCache, env.groundColor, [0.12, 0.16, 0.22, 1]);
+    var groundColorRGBA = scenePBRLightColor(colorCache, env.groundColor, [0.12, 0.16, 0.22, 1], physical);
     gl.uniform3f(uniforms.groundColor, groundColorRGBA[0], groundColorRGBA[1], groundColorRGBA[2]);
     gl.uniform1f(uniforms.groundIntensity, sceneNumber(env.groundIntensity, 0));
 
@@ -6983,7 +7057,7 @@
     var fogDensity = sceneNumber(env.fogDensity, 0);
     gl.uniform1i(uniforms.hasFog, fogDensity > 0 ? 1 : 0);
     gl.uniform1f(uniforms.fogDensity, fogDensity);
-    var fogColorRGBA = scenePBRCachedLightColor(colorCache, env.fogColor, [0.5, 0.5, 0.5, 1]);
+    var fogColorRGBA = scenePBRLightColor(colorCache, env.fogColor, [0.5, 0.5, 0.5, 1], physical);
     gl.uniform3f(uniforms.fogColor, fogColorRGBA[0], fogColorRGBA[1], fogColorRGBA[2]);
   }
 
@@ -8464,7 +8538,7 @@
 
     // Persistent shadow pass state — reuses one GL buffer and one scratch
     // Float32Array across all objects and lights, grown as needed.
-    var shadowState = { buffer: gl.createBuffer(), scratch: null };
+    var shadowState = { buffer: gl.createBuffer(), scratch: null, attribute: bindScenePBRDirectAttribute, data: scenePBRDirectAttribute, indices: bindScenePBRDirectIndexBuffer };
 
 	    // Pre-allocated scratch buffers for view/projection matrices (Fix 8).
 	    var scratchViewMatrix = new Float32Array(16);
@@ -10679,11 +10753,14 @@
           };
         }
         if (scenePBRObjectRenderPass(mesh, mat) !== renderPass) continue;
-        ip = mat && mat.detail ? sceneWebGLDetailProgram(gl, detailResources, "instanced") : ensureInstancedProgram();
+        var surfaceIP = sceneWebGLSelenaSurfaceProgram(gl, selenaSurfacePrograms, mat, "instanced");
+        if (surfaceIP === false) continue;
+        ip = surfaceIP || (mat && mat.detail ? sceneWebGLDetailProgram(gl, detailResources, "instanced") : ensureInstancedProgram());
         if (!ip) continue;
         gl.useProgram(ip.program); uploadInstancedFrame(ip);
         gl.depthMask(sceneTransmissionDepthWrite(mesh, mat, renderPass === "opaque"));
         uploadMaterial(gl, ip.uniforms, mat, textureCache); sceneWebGLWindUpload(gl, ip, mesh.wind);
+        sceneWebGLUploadSelenaSurface(gl, surfaceIP, mat, selenaUniformValue);
         if (mat && mat.detail) sceneWebGLUploadDetail(gl, detailResources, ip.uniforms, mat, detailEnabled);
 
         // Per-object shadow receive control.
@@ -11018,7 +11095,7 @@
       drawnPostEffects: function() { return lastPostEffects; },
       renderSurfaces: renderSurfaces,
       dispose: function() { frameTimer.dispose(); dispose(); },
-      diagnostics: diagnostics, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
+      diagnostics: diagnostics, iblStatus: function() { return uniforms._gosxIBLDiagnostics || null; }, shaderPrograms: function() { const q = scenePBRCompileContext(gl); return { total: q.total, pending: q.pending.size, failed: q.failed }; },
       type: "webgl-pbr",
       textureVariantContext: textureVariantContext,
     };

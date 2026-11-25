@@ -35,7 +35,7 @@ const api = loadTAA();
 
 function stubDevice() {
   const writes = [];
-  const object = (kind) => (desc) => ({ kind, desc, createView: () => ({ kind: kind + "-view" }), destroy() {} });
+  const object = (kind) => (desc) => ({ kind, desc, size: desc.size, createView: () => ({ kind: kind + "-view" }), destroy() { this.destroyed = true; } });
   return {
     writes,
     createTexture: object("texture"), createBuffer: object("buffer"), createBindGroup: object("group"),
@@ -45,7 +45,7 @@ function stubDevice() {
 }
 
 function stubPass(log) {
-  return { setPipeline() {}, setBindGroup() {}, setVertexBuffer(slot, buffer) { log.push(["vertex", slot, buffer]); },
+  return { setPipeline() {}, setBindGroup() {}, setVertexBuffer(slot, buffer, offset, size) { log.push(["vertex", slot, buffer, offset, size]); },
     draw(n, i) { log.push(["draw", n, i]); }, drawIndexed(n) { log.push(["drawIndexed", n]); }, end() {} };
 }
 
@@ -94,10 +94,10 @@ function frame(view, extra = {}) {
 
 test("a moving retained mesh and a skinned mesh draw motion vectors; still meshes do not", () => {
   const device = stubDevice(), log = [];
-  const skin = { size: 96 }, positions = { tag: "positions" };
+  const skin = { count: 900, outputBuffer: { size: 960 * 40 } }, positions = { tag: "positions" };
   const temporal = api.wgpuCreateTemporalAA(() => ({
     device, linearSampler: {}, materialGroup: () => ({}), previousSkin: (obj) => obj._gosxTAAPreviousSkin || null,
-    skinBuffer: (obj) => obj.skinned ? skin : null,
+    skinRecord: (obj) => obj.skinned ? skin : null,
     bindPositions: (pass, slot) => { pass.setVertexBuffer(slot, positions); return true; }, bindIndices: () => 36,
   }));
   const moving = { id: "crate", retainedGeometry: true, modelMatrix: identity(), vertexCount: 24 };
@@ -115,14 +115,83 @@ test("a moving retained mesh and a skinned mesh draw motion vectors; still meshe
     if (i > 0) assert.deepEqual(chain, [], "a frame with history drops taa from the post chain");
   }
   assert.equal(temporal.stats().taaMovers, 2, "the moved crate and the skinned hero draw; the wall reprojects by camera");
-  assert.ok(log.some((entry) => entry[0] === "copy"), "skinned positions are kept for the next frame");
-  assert.ok(log.some((entry) => entry[0] === "vertex" && entry[1] === 1 && entry[2] === hero._gosxTAAPreviousSkin), "the hero's previous skin feeds slot 1");
+  assert.deepEqual(log.filter((entry) => entry[0] === "copy").map((entry) => entry[4]), [900 * 12], "only the drawn positions are copied for the next frame");
+  assert.ok(log.some((entry) => entry[0] === "vertex" && entry[1] === 1 && entry[2] === hero._gosxTAAPreviousSkin && entry[3] === 0 && entry[4] === 900 * 12), "the hero's previous positions feed slot 1");
   assert.deepEqual(log.filter((entry) => entry[0] === "pass").map((entry) => entry[1]), ["gosx-taa-velocity", "gosx-taa-resolve", "gosx-taa-copy"]);
+});
+
+test("a skinned mesh keeps one previous-skin copy on its owner while its draw record is rebuilt each frame", () => {
+  const made = [];
+  const sized = () => {
+    const device = stubDevice(), create = device.createBuffer;
+    device.createBuffer = (desc) => { const buffer = create(desc); buffer.size = desc.size; made.push(buffer); return buffer; };
+    return device;
+  };
+  let device = sized();
+  const skin = { count: 900, outputBuffer: { size: 960 * 40 } }, owner = { id: "runner" };
+  const temporal = api.wgpuCreateTemporalAA(() => ({
+    device, linearSampler: {}, materialGroup: () => ({}), previousSkin: (obj) => (obj.resourceOwner || obj)._gosxTAAPreviousSkin || null,
+    skinRecord: (obj) => obj.skinned ? skin : null, bindPositions: () => true, bindIndices: () => 0,
+  }));
+  const effects = [{ kind: "taa" }];
+  const copies = () => made.filter((buffer) => buffer.desc && buffer.desc.label === "gosx-taa-previous-skin");
+  const step = (i, vertexCount = skin.count, viewCulled = false) => {
+    // The scene hands the renderer a new draw record for the same owner every frame.
+    const record = { id: "runner", skinned: true, resourceOwner: owner, modelMatrix: identity(), vertexCount, viewCulled };
+    const log = [], encoder = stubEncoder(log);
+    temporal.beginFrame(effects, frame(identity(), { now: i * 16 }));
+    temporal.capturePreviousSkins(encoder, [record]);
+    skin.count = vertexCount;
+    temporal.resolve(encoder, effects, { colorView: {}, colorFormat: "rgba16float", depthView: {}, samples: 1, objects: [record], particles: [], frameGroup: {}, bundle: {} });
+    return log;
+  };
+  for (let i = 0; i < 4; i++) step(i);
+  assert.equal(copies().length, 1, "one previous-skin buffer for the owner, not one per frame");
+  assert.strictEqual(owner._gosxTAAPreviousSkin, copies()[0]);
+
+  const resized = step(4, 933);
+  assert.ok(resized.some((entry) => entry[0] === "vertex" && entry[1] === 1 && entry[2] === skin.outputBuffer && entry[4] === 933 * 12), "resized geometry uses current positions for missing history");
+  step(5);
+  assert.equal(copies().length, 2);
+  assert.equal(copies()[1].size, 933 * 12);
+  assert.equal(copies()[0].destroyed, true, "the replaced history buffer is released");
+  assert.ok(!step(6, 933, true).some((entry) => entry[0] === "copy"), "culled meshes skip the history copy");
+
+  device = sized();
+  step(7);
+  assert.equal(copies().length, 3, "a new device gets its own previous-skin buffer");
+  assert.strictEqual(owner._gosxTAAPreviousSkin, copies()[2]);
+});
+
+test("a resized skin output survives until the encoding frame has submitted", async () => {
+  const passes = "../runtime/scene3d/webgpu-passes.ts";
+  const functions = extract(passes, "webGPUElioEnsureOutputBuffer");
+  const context = {
+    GPUBufferUsage: { STORAGE: 128, VERTEX: 32, COPY_DST: 8, COPY_SRC: 4 }, queueMicrotask,
+    wgpuTrackedBufferSize: (buffer) => buffer.size,
+    wgpuCreateTrackedBuffer(mesh, device, usage, size) {
+      const buffer = device.createBuffer({ usage, size });
+      mesh.pointsEntryGPUBuffers.add(buffer);
+      return buffer;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+
+  const device = stubDevice(), mesh = { pointsEntryGPUBuffers: new Set() }, record = {};
+  const copySource = context.webGPUElioEnsureOutputBuffer(mesh, device, record, 64);
+  const grown = context.webGPUElioEnsureOutputBuffer(mesh, device, record, 128);
+  assert.notStrictEqual(grown, copySource);
+  assert.ok(!copySource.destroyed, "the frame can still submit a copy from the old output");
+  await new Promise(queueMicrotask);
+  assert.equal(copySource.destroyed, true);
+  assert.ok(!mesh.pointsEntryGPUBuffers.has(copySource));
+  assert.ok(!grown.destroyed && mesh.pointsEntryGPUBuffers.has(grown));
 });
 
 test("history resets on a camera cut, a resize and a long gap", () => {
   const device = stubDevice();
-  const temporal = api.wgpuCreateTemporalAA(() => ({ device, linearSampler: {}, materialGroup: () => ({}), previousSkin: () => null, skinBuffer: () => null, bindPositions: () => true, bindIndices: () => 0 }));
+  const temporal = api.wgpuCreateTemporalAA(() => ({ device, linearSampler: {}, materialGroup: () => ({}), previousSkin: () => null, skinRecord: () => null, bindPositions: () => true, bindIndices: () => 0 }));
   const effects = [{ kind: "taa" }];
   const resolveFrame = { colorView: {}, colorFormat: "rgba16float", depthView: {}, samples: 1, objects: [], particles: [], frameGroup: {}, bundle: {} };
   const step = (view, extra) => { const valid = temporal.beginFrame(effects, frame(view, extra)); temporal.resolve(stubEncoder([]), effects, resolveFrame); return valid; };

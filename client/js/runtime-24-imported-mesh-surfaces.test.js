@@ -661,8 +661,7 @@ test("ordinary imported skeletal bind streams stay resident while live joints an
   assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0);
 });
 
-for (const [name, metadata] of [["morph", { _morphAnim: { defaults: [0] } }],
-                              ["node", { _nodeAnim: { nodeIndex: 0 } }]]) {
+for (const [name, metadata] of [["node", { _nodeAnim: { nodeIndex: 0 } }]]) {
   test(`ordinary imported ${name} animation keeps mutable skeletal vertex uploads`, () => {
     const h = ordinarySkinFixture(metadata);
     const object = h.instantiate("animated");
@@ -682,6 +681,21 @@ for (const [name, metadata] of [["morph", { _morphAnim: { defaults: [0] } }],
   });
 }
 
+test("ordinary imported skinned morph animation is a revisioned snapshot that uploads after a fold", () => {
+  const h = ordinarySkinFixture({ _morphAnim: { defaults: [0], skinned: true } });
+  const object = h.instantiate("animated");
+  assert.equal(object.vertices.immutable, true, "a skinned morph fold advances the revision, so its streams are a snapshot");
+  const first = h.build([object]);
+  assert.equal(first.meshObjects[0].retainedGeometry, true);
+  h.render(first);
+  const start = h.gl.ops.length;
+  object.vertices.positions[0] = .25;
+  object.vertices.revision++;
+  h.render(h.build([object]));
+  assert.ok(h.gl.ops.slice(start).some(op => op[0] === "bufferData"), "a folded revision uploads the changed streams");
+  h.renderer.dispose();
+});
+
 test("ordinary skeletal retention rejects authored mutable or unversioned snapshots", () => {
   const h = ordinarySkinFixture();
   for (const mutate of [object => { object.vertices.dynamic = true; },
@@ -691,7 +705,9 @@ test("ordinary skeletal retention rejects authored mutable or unversioned snapsh
                         object => { object.vertices.revision = null; }]) {
     const object = h.instantiate("mutable");
     mutate(object);
-    assert.equal(h.build([object]).meshObjects[0].retainedGeometry, false);
+    const record = h.build([object]).meshObjects[0];
+    assert.equal(record.retainedGeometry, false);
+    assert.equal(record.resourceOwner, object, "the per-frame record still names its owner for per-object GPU state");
   }
   h.renderer.dispose();
 });

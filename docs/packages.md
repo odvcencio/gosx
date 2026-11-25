@@ -48,6 +48,8 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `assetpipe` | experimental | yes | Inventories Scene3D-ready project assets, describes the build-time optimization work GoSX should perform before those assets ship, and runs the part of that work GoSX can do in pure Go. |
+| `assetpipe/audiobake` | experimental | yes | The offline half of a game's sound: it encodes WAV renders as Ogg Opus with ffmpeg, skips work whose source has not changed (hash stamps next to the output), and copies the encoded files into a bundle. |
+| `assetpipe/author` | experimental | yes | Builds rigged, animated glTF models from Go code: a mesh builder (ring stacks, ellipsoids, swept tubes, merge, normals, atlas UVs), a skeleton with skin weights and joint bands, keyframed clips sampled from Go functions, a texture atlas, morph targets, and a writer on top of gltfedit. |
 | `assetpipe/gltfedit` | experimental | yes | Reads a glTF 2.0 or GLB document, rewrites mesh primitives, and writes a new GLB. |
 | `assetpipe/hdrimage` | experimental | yes | Decodes high dynamic range images into linear float32 pixels. |
 | `assetpipe/ibl` | experimental | yes | Builds image-based lighting products from a linear high dynamic range environment image. |
@@ -141,8 +143,11 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `game` | experimental | yes | Provides a first-class runtime foundation for interactive simulations, games, and scientific visualizations in GoSX. |
-| `game/actions` | experimental | yes | Maps keyboard, mouse, pointer-lock and gamepad input onto named game actions. |
+| `game/actions` | experimental | yes | Maps keyboard, mouse, pointer-lock, gamepad and touch input onto named game actions. |
 | `game/actions/bridge` | experimental | yes | Publishes action state from package actions to a game.Input, so systems that read game.Input see the same actions. |
+| `game/actions/hand` | experimental | yes | Tracks which device the player has in hand: the keyboard, a gamepad or the touch screen. |
+| `game/actions/prompt` | experimental | yes | Writes a game's control prompts for the device in hand. |
+| `game/actions/seats` | experimental | yes | Runs the seats of a local multiplayer game: each player claims a device by pressing a button on it, and from then on that device's input reaches only that player's actions.Map. |
 | `game/audio` | experimental | yes | A small WebAudio bus graph and one-shot player for a browser game client. |
 | `game/audio/host` | experimental | yes | Exposes typed browser audio nodes and lifecycle controls without importing the game runtime or manifest player. |
 | `game/audio/kernel` | experimental | yes | Hosts a WASM audio kernel, such as Cicada's music engine, in an AudioWorklet and routes its output to a mixer bus. |
@@ -150,14 +155,17 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `game/audio/speech/loudness` | experimental | yes | Measures and normalizes mono speech clips: ITU-R BS.1770-4 loudness, 4x true peak, silence trimming, a peak-safe limiter, resampling and WAV reading and writing. |
 | `game/audio/speech/voice` | experimental | yes | Plays speech.Sequencer timelines on the mixer's voice bus. |
 | `game/audio/speech/voicerender` | experimental | yes | Turns a speech.RenderManifest into voice clips: it asks a text-to-speech Provider for each phrase variant, trims silence, normalizes loudness, packs the clips into one atlas per voice and writes the clip manifest the runtime loads. |
+| `game/audio/wav` | experimental | yes | Writes PCM WAV files from Go samples and prepares sound that loops: what a game needs to synthesize a cue in Go and hand it to audio.Player (through audio.Library and audio.FetchBytes) or to bake it to a file. |
 | `game/audio/worklet` | experimental | yes | Supplies GoSX's browser processor for WASM audio reactors. |
 | `game/boot` | experimental | yes | The loading and readiness gate of a game. |
 | `game/boot/bootpage` | experimental | yes | Renders the server-side parts of the boot gate: preload links for the Go WASM module and its wasm_exec script, and a small JavaScript watchdog that runs before the framework scripts. |
 | `game/camera` | experimental | yes | Camera rigs, poses and a director for game cameras. |
 | `game/flow` | experimental | yes | Runs a game's top-level states (boot, title, lobby, play, pause, results) as a stack, and ties the stack to the simulation pause flag and to the input context stack. |
+| `game/focus` | experimental | yes | Moves the keyboard focus over a page's controls with a gamepad, the way a console menu does: the D-pad walks the buttons and menus on screen, A presses the one with the focus (or steps a menu to its next choice, or a slider one step), and B goes back. |
 | `game/gamepad` | experimental | yes | Polls the browser Gamepad API and feeds the result into a game.Input's existing bindings. |
 | `game/host` | experimental | yes | Provides typed browser gamepad snapshots and animation-frame ownership without depending on game.Runtime, server hubs, or the compiler. |
-| `game/kitui` | experimental | yes | Renders the screens every game needs (pause menu, settings, key rebinding, loading, error) as GoSX nodes. |
+| `game/host/hosttest` | experimental | yes | Drives a page's gamepads from a native Go test. |
+| `game/kitui` | experimental | yes | Renders the screens every game needs (pause menu, settings, key rebinding, loading, error, and a dialog the game writes into) as GoSX nodes. |
 | `game/loop` | experimental | yes | Owns the browser's requestAnimationFrame driver so a game does not have to call js.FuncOf/requestAnimationFrame itself. |
 | `game/netsync` | experimental | yes | The client side of package room: it connects a GoSX game to a server-authoritative room, predicts the local player on a local copy of the simulation, and reconciles with the server's snapshots. |
 | `game/physicsys` | experimental | yes | Connects the physics package's gameplay features to game.Runtime: it drives character controllers at the fixed step and delivers trigger events to game code. |
@@ -205,6 +213,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | Package | Tier | js/wasm files | What it is |
 |---|---|---|---|
 | `browser` | internal-use | yes | Supplies the authoring marker used by GoSX island handlers for browser-owned effects. |
+| `browsertest` | experimental | yes | Runs browser checks from go test: it starts Chrome with a bounded, retried startup (Start, Launch), opens a page with the emulation a check needs (Open), and drives it with waits that stretch when the page draws slowly (Page). |
 | `cmd/gosx` | stable | yes | The GoSX compiler and development tool. |
 | `cmd/gosx-detlint` | internal-use | yes | Reports code that can give different bits on js/wasm, amd64 and arm64, in packages marked //gosx:deterministic. |
 | `cmd/gosx-grammar-blob` | internal-use | yes | Regenerates the embedded GSX grammar blob. |

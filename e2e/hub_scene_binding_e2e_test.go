@@ -14,10 +14,10 @@ import (
 
 	"github.com/chromedp/chromedp"
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/hydrate"
-	"m31labs.dev/gosx/internal/chrometest"
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/gosx/server"
 )
@@ -123,7 +123,7 @@ func TestHubSceneBindingsRoundTripInBrowser(t *testing.T) {
 
 func hubBindingBrowser(t *testing.T, chrome string) (context.Context, func()) {
 	t.Helper()
-	browser, err := chrometest.Start(t.Context(), chrome,
+	browser, err := browsertest.Start(t.Context(), chrome,
 		"--no-sandbox", "--use-angle=swiftshader", "--enable-webgl", "--mute-audio")
 	if err != nil {
 		t.Fatalf("start browser for hub binding: %v", err)

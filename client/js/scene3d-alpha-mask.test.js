@@ -911,3 +911,26 @@ test("scene model zero-opacity hide gate spares enabled numeric alpha cutoffs", 
     hidden({ opacity: 0, scaleX: 0, scaleY: 0, scaleZ: 0 }, { material: { alphaCutoff: 0 } }),
     true, "zero scale still hides masked models");
 });
+
+test("sceneObjectMaterialProfile trusts a model object's material revision and re-reads when it advances", () => {
+  const scene = createSceneCoreContext();
+  const result = JSON.parse(callIn(scene, "(function () {" +
+    "const object = { _matRev: 0, materialKind: 'matte', customUniforms: { skin: [1, 0.5, 0.25] } };" +
+    "const first = sceneObjectMaterialProfile(object);" +
+    "const again = sceneObjectMaterialProfile(object);" +
+    // An unannounced edit is not walked for: the revision says nothing changed.
+    "object.customUniforms = { skin: [0, 0, 0] };" +
+    "const unannounced = sceneObjectMaterialProfile(object);" +
+    "object._matRev = 1;" +
+    "const announced = sceneObjectMaterialProfile(object);" +
+    "const plain = { materialKind: 'matte', customUniforms: { skin: [1, 0.5, 0.25] } };" +
+    "const plainFirst = sceneObjectMaterialProfile(plain);" +
+    "plain.customUniforms = { skin: [0, 0, 0] };" +
+    "const plainAfter = sceneObjectMaterialProfile(plain);" +
+    "return JSON.stringify({ sameWhileRevisionHolds: first === again && first === unannounced," +
+    "  rereadsOnNewRevision: announced !== first, plainRereadsOnEdit: plainAfter !== plainFirst });" +
+  "})()"));
+  assert.equal(result.sameWhileRevisionHolds, true, "an equal revision returns the cached profile without walking inputs");
+  assert.equal(result.rereadsOnNewRevision, true, "an advanced revision reads the inputs again");
+  assert.equal(result.plainRereadsOnEdit, true, "an object with no revision is still compared field by field");
+});

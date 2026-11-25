@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/internal/filepolicy"
+	"m31labs.dev/gosx/internal/mediatype"
 
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
@@ -268,7 +268,7 @@ func serveDevRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string, 
 func serveImmutableRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
 	setRuntimeContentType(w.Header(), fsPath)
 	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(fsPath)))
+		w.Header().Set("Content-Type", mediatype.ForServing(filepath.Ext(fsPath)))
 	}
 	httpcache.MarkImmutableAsset(w, r)
 	serveRuntimeFileWithCompression(w, r, fsPath, compression)

@@ -343,26 +343,29 @@ type ObjectIR struct {
 // ModelIR is the typed compatibility record for one scene model instance.
 type ModelIR struct {
 	ObjectIR
-	Src                string   `json:"src,omitempty"`
-	PreviewSrc         string   `json:"previewSrc,omitempty"`
-	FullSrc            string   `json:"fullSrc,omitempty"`
-	Progressive        bool     `json:"progressive,omitempty"`
-	ScaleX             float64  `json:"scaleX,omitempty"`
-	ScaleY             float64  `json:"scaleY,omitempty"`
-	ScaleZ             float64  `json:"scaleZ,omitempty"`
-	Bounds             float64  `json:"bounds,omitempty"`
-	Fit                string   `json:"fit,omitempty"`
-	FitAlign           string   `json:"fitAlign,omitempty"`
-	Static             *bool    `json:"static,omitempty"`
-	Animation          string   `json:"animation,omitempty"`
-	AnimationSeq       string   `json:"animationSeq,omitempty"`
-	AnimationSpeed     *float64 `json:"animationSpeed,omitempty"`
-	AnimationWeight    *float64 `json:"animationWeight,omitempty"`
-	AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
-	AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
-	Loop               *bool    `json:"loop,omitempty"`
-	ClipSampled        bool     `json:"clipSampled,omitempty"`
-	RootMotion         bool     `json:"rootMotion,omitempty"`
+	Src                string             `json:"src,omitempty"`
+	PreviewSrc         string             `json:"previewSrc,omitempty"`
+	FullSrc            string             `json:"fullSrc,omitempty"`
+	Progressive        bool               `json:"progressive,omitempty"`
+	ScaleX             float64            `json:"scaleX,omitempty"`
+	ScaleY             float64            `json:"scaleY,omitempty"`
+	ScaleZ             float64            `json:"scaleZ,omitempty"`
+	Bounds             float64            `json:"bounds,omitempty"`
+	Fit                string             `json:"fit,omitempty"`
+	FitAlign           string             `json:"fitAlign,omitempty"`
+	Static             *bool              `json:"static,omitempty"`
+	Animation          string             `json:"animation,omitempty"`
+	AnimationSeq       string             `json:"animationSeq,omitempty"`
+	AnimationSpeed     *float64           `json:"animationSpeed,omitempty"`
+	AnimationWeight    *float64           `json:"animationWeight,omitempty"`
+	AnimationFadeInMS  *int               `json:"animationFadeInMS,omitempty"`
+	AnimationFadeOutMS *int               `json:"animationFadeOutMS,omitempty"`
+	Loop               *bool              `json:"loop,omitempty"`
+	ClipSampled        bool               `json:"clipSampled,omitempty"`
+	RootMotion         bool               `json:"rootMotion,omitempty"`
+	MorphWeights       map[string]float64 `json:"morphWeights,omitempty"`
+	Attachments        []AttachmentIR     `json:"attachments,omitempty"`
+	JointScales        map[string]float64 `json:"jointScales,omitempty"`
 }
 
 // MarshalJSON emits both the embedded ObjectIR fields AND the ModelIR
@@ -385,26 +388,29 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 	type objectAlias ObjectIR
 	type modelWire struct {
 		objectAlias
-		Src                string   `json:"src,omitempty"`
-		PreviewSrc         string   `json:"previewSrc,omitempty"`
-		FullSrc            string   `json:"fullSrc,omitempty"`
-		Progressive        bool     `json:"progressive,omitempty"`
-		ScaleX             float64  `json:"scaleX,omitempty"`
-		ScaleY             float64  `json:"scaleY,omitempty"`
-		ScaleZ             float64  `json:"scaleZ,omitempty"`
-		Bounds             float64  `json:"bounds,omitempty"`
-		Fit                string   `json:"fit,omitempty"`
-		FitAlign           string   `json:"fitAlign,omitempty"`
-		Static             *bool    `json:"static,omitempty"`
-		Animation          string   `json:"animation,omitempty"`
-		AnimationSeq       string   `json:"animationSeq,omitempty"`
-		AnimationSpeed     *float64 `json:"animationSpeed,omitempty"`
-		AnimationWeight    *float64 `json:"animationWeight,omitempty"`
-		AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
-		AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
-		Loop               *bool    `json:"loop,omitempty"`
-		ClipSampled        bool     `json:"clipSampled,omitempty"`
-		RootMotion         bool     `json:"rootMotion,omitempty"`
+		Src                string             `json:"src,omitempty"`
+		PreviewSrc         string             `json:"previewSrc,omitempty"`
+		FullSrc            string             `json:"fullSrc,omitempty"`
+		Progressive        bool               `json:"progressive,omitempty"`
+		ScaleX             float64            `json:"scaleX,omitempty"`
+		ScaleY             float64            `json:"scaleY,omitempty"`
+		ScaleZ             float64            `json:"scaleZ,omitempty"`
+		Bounds             float64            `json:"bounds,omitempty"`
+		Fit                string             `json:"fit,omitempty"`
+		FitAlign           string             `json:"fitAlign,omitempty"`
+		Static             *bool              `json:"static,omitempty"`
+		Animation          string             `json:"animation,omitempty"`
+		AnimationSeq       string             `json:"animationSeq,omitempty"`
+		AnimationSpeed     *float64           `json:"animationSpeed,omitempty"`
+		AnimationWeight    *float64           `json:"animationWeight,omitempty"`
+		AnimationFadeInMS  *int               `json:"animationFadeInMS,omitempty"`
+		AnimationFadeOutMS *int               `json:"animationFadeOutMS,omitempty"`
+		Loop               *bool              `json:"loop,omitempty"`
+		ClipSampled        bool               `json:"clipSampled,omitempty"`
+		RootMotion         bool               `json:"rootMotion,omitempty"`
+		MorphWeights       map[string]float64 `json:"morphWeights,omitempty"`
+		Attachments        []AttachmentIR     `json:"attachments,omitempty"`
+		JointScales        map[string]float64 `json:"jointScales,omitempty"`
 	}
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
@@ -428,6 +434,9 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		Loop:               m.Loop,
 		ClipSampled:        m.ClipSampled,
 		RootMotion:         m.RootMotion,
+		MorphWeights:       finiteMorphWeights(m.MorphWeights),
+		Attachments:        m.Attachments,
+		JointScales:        positiveJointScales(m.JointScales),
 	})
 }
 
@@ -1186,6 +1195,7 @@ type EnvironmentIR struct {
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
 	ToneMapping      string         `json:"toneMapping,omitempty"`
+	LightModel       string         `json:"lightModel,omitempty"`
 	FogColor         string         `json:"fogColor,omitempty"`
 	FogDensity       float64        `json:"fogDensity,omitempty"`
 	Crowds           []CrowdIR      `json:"crowds,omitempty"`
@@ -2387,6 +2397,15 @@ func (item ModelIR) legacyProps() map[string]any {
 	if item.RootMotion {
 		record["rootMotion"] = true
 	}
+	if weights := finiteMorphWeights(item.MorphWeights); len(weights) > 0 {
+		record["morphWeights"] = weights
+	}
+	if len(item.Attachments) > 0 {
+		record["attachments"] = item.Attachments
+	}
+	if scales := positiveJointScales(item.JointScales); len(scales) > 0 {
+		record["jointScales"] = scales
+	}
 	if item.Loop != nil {
 		record["loop"] = *item.Loop
 	}
@@ -3402,6 +3421,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
 		item.ToneMapping == "" &&
+		item.LightModel == "" &&
 		item.FogColor == "" &&
 		item.FogDensity == 0 &&
 		len(item.Crowds) == 0 &&
@@ -3448,6 +3468,7 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
 	setString(record, "toneMapping", item.ToneMapping)
+	setString(record, "lightModel", item.LightModel)
 	setString(record, "fogColor", item.FogColor)
 	setNumeric(record, "fogDensity", item.FogDensity)
 	if len(item.Crowds) > 0 {
@@ -3477,6 +3498,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
 		ToneMapping:      strings.TrimSpace(environment.ToneMapping),
+		LightModel:       strings.TrimSpace(environment.LightModel),
 		FogColor:         strings.TrimSpace(environment.FogColor),
 		FogDensity:       environment.FogDensity,
 		Crowds:           normalizeCrowds(environment.Crowds),

@@ -332,6 +332,69 @@ player.StopAction(0, 0.2)    // or let a non-looping clip end by itself
 The action's clip events fire like a state's. `Action(layer)` reports its
 clip, time and weight.
 
+### Placement
+
+`SetRoot` puts a character in the scene from the same frame that poses it:
+
+```go
+player.SetRoot(animgraph.Pose{X: p.X, Y: 0, Z: p.Z, Yaw: p.Heading})
+player.Step(dt)
+_ = animgraph.Dispatch("scene", player)
+```
+
+The renderer moves the model and writes its joints in one step, so a
+character never draws one frame behind its own pose. `SetRoot` replaces the
+model's declared position and its rotation about +Y. Rotation about the other
+axes and scale stay as declared on `scene.Model`. A yaw of 0 faces +Z.
+
+The root goes out with every frame until `ClearRoot`. After `ClearRoot` the
+model stays where its last frame put it, and scene commands move it again.
+A model that reloads (for example after `scene.SetModelsCommand` changes its
+source) starts at its last root, not at its declared position.
+
+Without `SetRoot`, move the model with scene commands, as before.
+
+### Sampled layers
+
+By default a layer's state machine picks clips and advances their time.
+When your simulation owns time (a replay the player can scrub, rollback
+netcode, a recorded play stepped one frame at a time) set the samples
+yourself:
+
+```go
+run, sprint := prog.ClipID("Run"), prog.ClipID("Sprint")
+player.SetLayerSamples(0,
+    animgraph.Sample{Clip: run, Time: stride * runSeconds, Weight: 1 - t, Loop: true},
+    animgraph.Sample{Clip: sprint, Time: stride * sprintSeconds, Weight: t, Loop: true},
+)
+```
+
+The layer is then a sampled layer: the renderer samples exactly those clips
+at those times and blends them by their relative weights. The same samples
+give the same pose, whatever was sent before, so seeking a replay backwards
+needs no history.
+
+| Rule | Detail |
+|---|---|
+| What stops | The layer's state machine, its actions and its clip events. Other layers run as usual. |
+| What still applies | `SetLayerWeight`, the layer's `WeightParam`, its mask, additive mode, IK, look-at and level of detail. Curves follow the samples. |
+| Limits | At most 16 samples per layer. `Time` is finite and not negative; past the clip's end it wraps when `Loop` is set and holds the last key otherwise. `Weight` is finite and not negative. A call with a bad argument returns false and changes nothing. |
+| How long it lasts | Until the next `SetLayerSamples`, `ReleaseLayerSamples` or `Reset`. An empty sample list is valid: the layer contributes nothing. |
+| Going back | `ReleaseLayerSamples` returns the layer to its state machine, in the state it held before. |
+
+A character that is only ever sampled still declares a layer. Give its state
+machine one state with no clip:
+
+```go
+Layers: []animgraph.Layer{{Name: "body", Machine: animgraph.StateMachine{
+    States: []animgraph.State{{Name: "sampled"}},
+}}},
+```
+
+`Step` does not move a sampled layer's clips, but call it anyway: it carries
+the frame time the renderer uses to smooth IK, and it advances the other
+layers and the level-of-detail fades.
+
 ### IK
 
 All positions are world space. Feedback reports the same frame's results.
@@ -458,8 +521,8 @@ move, err := animgraph.StartPaired(clip, attacker, defender, animgraph.PairStart
 move.Step(dt) // before the instances' Step: sets rates and contact IK
 attacker.Step(dt)
 defender.Step(dt)
-setModelPose("attacker", move.Root(0)) // your scene update: position and yaw
-setModelPose("defender", move.Root(1))
+attacker.SetRoot(move.Root(0)) // position and yaw, applied with the pose
+defender.SetRoot(move.Root(1))
 _ = animgraph.Dispatch("scene", attacker, defender) // together, for contact IK
 ```
 
@@ -495,6 +558,17 @@ sched := &animgraph.LODScheduler{FullBudget: 6} // at most 6 characters at level
 // every frame, after stepping every instance:
 due := sched.Update(dt, animgraph.LODCamera{Position: camPos, FOVY: fovY, ViewportHeight: canvasHeight}, targets)
 _ = animgraph.Dispatch("scene", due...)
+```
+
+For characters placed with `SetRoot`, pass every instance to `Dispatch`, not
+only `due`. A character whose pose is not due then sends its placement alone
+(25 bytes plus its ID), and the renderer moves it with one matrix multiply
+per joint. It keeps moving every frame while its pose updates at the reduced
+rate:
+
+```go
+sched.Update(dt, cam, targets)
+_ = animgraph.Dispatch("scene", all...) // due poses in full, the rest placement only
 ```
 
 Nothing pops: a level changes only once the character is 15% past the
@@ -535,6 +609,90 @@ graph.Rig = animgraph.Rig{
 }
 ```
 
+### One model, many bodies
+
+Players who share one GLB can each have their own build. Author the shapes
+as morph targets, name them in `mesh.extras.targetNames`, and give each
+`scene.Model` its weights:
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    MorphWeights: map[string]float64{"mass": .8, "belly": .4, "pads": .5}}
+```
+
+Every model with `MorphWeights` and the same `Src` shares one loaded copy
+that keeps its targets; each folds its own weights into its own vertices
+before skinning, so every clip and IK chain still fits. Declare a weight of
+0 for each target a model may use later: a model declared with no weights
+loads its GLB without targets.
+
+`scene.PatchModelsCommand` changes a mounted model in place on the next
+frame, without loading it again: its morph weights, joint scales, scale and
+visibility.
+A game whose models show different players from play to play patches only
+the models whose player changed:
+
+```go
+cmd := scene.PatchModelsCommand([]scene.ModelPatch{{
+    ID:           "home-03",
+    MorphWeights: map[string]float64{"mass": -.4, "pads": -.6},
+    Scale:        &scene.Vector3{X: .97, Y: .97, Z: .97},
+}})
+```
+
+Targets a patch does not name return to their authored weight. Instanced
+crowds (`InstancedGLBMesh`) do not read `MorphWeights`.
+
+`ModelPatch.Uniforms` sets material values by name on the objects that
+draw with the model's own material, such as a Selena material's params, so
+one material can give each player his own skin tone; the next frame packs
+them.
+
+### Gear on joints
+
+`Model.Attachments` fixes the meshes of another glTF to one joint of a
+skinned model: a facemask on the head, a glove on a hand, a towel at the hip.
+Model each piece where it sits on the character in its bind pose, in the
+character's units, and give each piece a mesh name. Scene3D binds every
+vertex of the piece wholly to the joint, so the joint matrices that pose the
+body pose the gear on the same frame, on the GPU:
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    Attachments: []scene.Attachment{
+        {Name: "mask-cage", Src: "/arena/gear.glb", Mesh: "mask-cage", Joint: "head"},
+        {Name: "visor-smoke", Src: "/arena/gear.glb", Mesh: "visor", Joint: "head", Hidden: true,
+            Material: &scene.StandardMaterial{Color: "#1c2226", Opacity: scene.Float(.7), BlendMode: scene.BlendAlpha}},
+    }}
+```
+
+Every model shares one loaded copy of the gear file. A piece with no
+`Material` draws with the model's own material, so gear painted on the
+model's texture atlas takes its colours. A hidden piece costs no draw, and
+`ModelPatch.Attachments` shows or hides pieces of a mounted model by name, so
+a model can carry every piece its players might wear and show the pieces
+this player wears. `assetpipe/author.PropSet` writes such a gear file: one
+unskinned mesh and node per piece.
+
+### Bigger or smaller parts
+
+`Model.JointScales` scales joints of one model's skin, by joint name, so
+players who share one GLB and one rig can differ in the size of a part: a
+larger head and helmet on a heavier lineman, say.
+
+```go
+scene.Model{ID: "home-03", Src: "/arena/athlete.glb", ClipSampled: true,
+    JointScales: map[string]float64{"head": 1.06}}
+```
+
+Each factor multiplies the joint's own scale on all three axes, on top of
+the pose, the same way `animgraph.Rig.BoneScale` does for every model on a
+rig. It scales the vertices the joint moves, the gear fixed to it
+(`Attachments`) and every joint below it, about the joint's origin. Use the
+joint that a part hangs from: a head scaled at its base grows upward and
+keeps the neck where it was. `ModelPatch.JointScales` changes the scales of
+a mounted model on the next frame; an empty map clears them.
+
 ### Clip names and durations
 
 `gltfclip.Read(glb)` returns each animation's name and duration from the
@@ -565,16 +723,20 @@ synchronously and re-skin the named models; a model the frame does not name
 keeps its pose. Frames for models that are still loading are held and applied
 when the model hydrates.
 
-The frame layout is documented on `animgraph.FrameEncoder`. A golden fixture
-(`motion/animgraph/testdata/frame.golden.hex`) pins the encoder, and the
-browser decoder test reads the same bytes.
+The frame layout is documented on `animgraph.FrameEncoder`. Two golden
+fixtures pin the encoder, and the browser decoder test reads the same bytes:
+`motion/animgraph/testdata/frame.golden.hex` (layers, IK, look-at) and
+`frame-root.golden.hex` (a root placement, a sampled layer and a
+placement-only model).
 
 ### Limits
 
 - **Root motion stays in the renderer.** By default the hips' horizontal clip
-  motion is removed and your simulation moves the character; set
-  `scene.Model.RootMotion` to keep it. The graph does not report root-motion
-  deltas to Go.
+  motion is removed and your simulation moves the character (with `SetRoot`
+  or scene commands); set `scene.Model.RootMotion` to keep it. The graph does
+  not report root-motion deltas to Go.
+- **Placement is ground-plane.** `SetRoot` carries a position and a yaw. A
+  character that leans, falls or rolls does so in its clips.
 - **Morph targets.** Clip channels that animate morph weights (facial
   shapes) do not play through the graph; skeletal channels do. A model with
   morph targets keeps its default weights.

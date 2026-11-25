@@ -245,111 +245,8 @@ func (d *Document) AccessorUseCount() map[int]int {
 // only the buffer views the document still reaches, and it packs them into a
 // single embedded buffer.
 func (d *Document) WriteGLB() ([]byte, error) {
-	var images []image
-	if err := d.decodeSection("images", &images); err != nil {
-		return nil, err
-	}
-
-	keep := make([]bool, len(d.BufferViews))
-	gcSafe := d.bufferViewGCSafe()
-	if !gcSafe {
-		for i := range keep {
-			keep[i] = true
-		}
-	} else {
-		for _, accessor := range d.Accessors {
-			if accessor.BufferView != nil && *accessor.BufferView >= 0 && *accessor.BufferView < len(keep) {
-				keep[*accessor.BufferView] = true
-			}
-		}
-		for _, img := range images {
-			if img.BufferView != nil && *img.BufferView >= 0 && *img.BufferView < len(keep) {
-				keep[*img.BufferView] = true
-			}
-		}
-	}
-
-	var payload []byte
-	remap := make([]int, len(d.BufferViews))
-	newViews := make([]BufferView, 0, len(d.BufferViews))
-	// packed maps the content hash of a view payload to the offset it already
-	// occupies. Two views that hold the same bytes then share those bytes, so a
-	// duplicated attribute costs only its own view record.
-	packed := map[string]int{}
-	for index, view := range d.BufferViews {
-		remap[index] = -1
-		if !keep[index] {
-			continue
-		}
-		if view.Buffer < 0 || view.Buffer >= len(d.binary) {
-			return nil, fmt.Errorf("%w: bufferView %d names buffer %d", ErrFormat, index, view.Buffer)
-		}
-		source := d.binary[view.Buffer]
-		if view.ByteOffset+view.ByteLength > len(source) {
-			return nil, fmt.Errorf("%w: bufferView %d runs past its buffer", ErrFormat, index)
-		}
-		bytesOfView := source[view.ByteOffset : view.ByteOffset+view.ByteLength]
-		digest := viewDigest(bytesOfView)
-		offset, reused := packed[digest]
-		if !reused {
-			for len(payload)%4 != 0 {
-				payload = append(payload, 0)
-			}
-			offset = len(payload)
-			payload = append(payload, bytesOfView...)
-			packed[digest] = offset
-		}
-		copied := view
-		copied.Buffer = 0
-		copied.ByteOffset = offset
-		remap[index] = len(newViews)
-		newViews = append(newViews, copied)
-	}
-
-	accessors := make([]Accessor, len(d.Accessors))
-	copy(accessors, d.Accessors)
-	for i := range accessors {
-		if accessors[i].BufferView == nil {
-			continue
-		}
-		old := *accessors[i].BufferView
-		if old < 0 || old >= len(remap) || remap[old] < 0 {
-			return nil, fmt.Errorf("%w: accessor %d lost its buffer view", ErrFormat, i)
-		}
-		mapped := remap[old]
-		accessors[i].BufferView = &mapped
-	}
-	for i := range images {
-		if images[i].BufferView == nil {
-			continue
-		}
-		old := *images[i].BufferView
-		if old < 0 || old >= len(remap) || remap[old] < 0 {
-			return nil, fmt.Errorf("%w: image %d lost its buffer view", ErrFormat, i)
-		}
-		mapped := remap[old]
-		images[i].BufferView = &mapped
-	}
-
-	root := make(map[string]json.RawMessage, len(d.root)+4)
-	for key, value := range d.root {
-		root[key] = value
-	}
-	if err := setSection(root, "accessors", accessors); err != nil {
-		return nil, err
-	}
-	if err := setSection(root, "bufferViews", newViews); err != nil {
-		return nil, err
-	}
-	if err := setSection(root, "meshes", d.Meshes); err != nil {
-		return nil, err
-	}
-	if len(images) > 0 {
-		if err := setSection(root, "images", images); err != nil {
-			return nil, err
-		}
-	}
-	if err := d.writeChangedSections(root); err != nil {
+	root, payload, err := d.assemble()
+	if err != nil {
 		return nil, err
 	}
 	if err := setSection(root, "buffers", []Buffer{{ByteLength: len(payload)}}); err != nil {
@@ -384,6 +281,140 @@ func (d *Document) WriteGLB() ([]byte, error) {
 		out = append(out, payload...)
 	}
 	return out, nil
+}
+
+// WriteGLTF serializes the document as glTF JSON and one external binary
+// buffer named bufferURI. It packs the buffer exactly as WriteGLB does, so
+// several documents that differ only in JSON sections (an image URI, a
+// material) can share one cached .bin file.
+func (d *Document) WriteGLTF(bufferURI string) (jsonDoc, buffer []byte, err error) {
+	if bufferURI == "" {
+		return nil, nil, fmt.Errorf("%w: WriteGLTF needs a buffer URI", ErrFormat)
+	}
+	root, payload, err := d.assemble()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := setSection(root, "buffers", []Buffer{{URI: bufferURI, ByteLength: len(payload)}}); err != nil {
+		return nil, nil, err
+	}
+	jsonDoc, err = json.Marshal(root)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gltfedit: marshal document: %w", err)
+	}
+	return jsonDoc, payload, nil
+}
+
+// assemble packs the reachable buffer views into one payload and returns the
+// document sections that point into it. The caller adds the buffers section.
+func (d *Document) assemble() (map[string]json.RawMessage, []byte, error) {
+	var images []image
+	if err := d.decodeSection("images", &images); err != nil {
+		return nil, nil, err
+	}
+	keep := make([]bool, len(d.BufferViews))
+	gcSafe := d.bufferViewGCSafe()
+	if !gcSafe {
+		for i := range keep {
+			keep[i] = true
+		}
+	} else {
+		for _, accessor := range d.Accessors {
+			if accessor.BufferView != nil && *accessor.BufferView >= 0 && *accessor.BufferView < len(keep) {
+				keep[*accessor.BufferView] = true
+			}
+		}
+		for _, img := range images {
+			if img.BufferView != nil && *img.BufferView >= 0 && *img.BufferView < len(keep) {
+				keep[*img.BufferView] = true
+			}
+		}
+	}
+
+	var payload []byte
+	remap := make([]int, len(d.BufferViews))
+	newViews := make([]BufferView, 0, len(d.BufferViews))
+	// packed maps the content hash of a view payload to the offset it already
+	// occupies. Two views that hold the same bytes then share those bytes, so a
+	// duplicated attribute costs only its own view record.
+	packed := map[string]int{}
+	for index, view := range d.BufferViews {
+		remap[index] = -1
+		if !keep[index] {
+			continue
+		}
+		if view.Buffer < 0 || view.Buffer >= len(d.binary) {
+			return nil, nil, fmt.Errorf("%w: bufferView %d names buffer %d", ErrFormat, index, view.Buffer)
+		}
+		source := d.binary[view.Buffer]
+		if view.ByteOffset+view.ByteLength > len(source) {
+			return nil, nil, fmt.Errorf("%w: bufferView %d runs past its buffer", ErrFormat, index)
+		}
+		bytesOfView := source[view.ByteOffset : view.ByteOffset+view.ByteLength]
+		digest := viewDigest(bytesOfView)
+		offset, reused := packed[digest]
+		if !reused {
+			for len(payload)%4 != 0 {
+				payload = append(payload, 0)
+			}
+			offset = len(payload)
+			payload = append(payload, bytesOfView...)
+			packed[digest] = offset
+		}
+		copied := view
+		copied.Buffer = 0
+		copied.ByteOffset = offset
+		remap[index] = len(newViews)
+		newViews = append(newViews, copied)
+	}
+
+	accessors := make([]Accessor, len(d.Accessors))
+	copy(accessors, d.Accessors)
+	for i := range accessors {
+		if accessors[i].BufferView == nil {
+			continue
+		}
+		old := *accessors[i].BufferView
+		if old < 0 || old >= len(remap) || remap[old] < 0 {
+			return nil, nil, fmt.Errorf("%w: accessor %d lost its buffer view", ErrFormat, i)
+		}
+		mapped := remap[old]
+		accessors[i].BufferView = &mapped
+	}
+	for i := range images {
+		if images[i].BufferView == nil {
+			continue
+		}
+		old := *images[i].BufferView
+		if old < 0 || old >= len(remap) || remap[old] < 0 {
+			return nil, nil, fmt.Errorf("%w: image %d lost its buffer view", ErrFormat, i)
+		}
+		mapped := remap[old]
+		images[i].BufferView = &mapped
+	}
+
+	root := make(map[string]json.RawMessage, len(d.root)+4)
+	for key, value := range d.root {
+		root[key] = value
+	}
+	if err := setSection(root, "accessors", accessors); err != nil {
+		return nil, nil, err
+	}
+	if err := setSection(root, "bufferViews", newViews); err != nil {
+		return nil, nil, err
+	}
+	if err := setSection(root, "meshes", d.Meshes); err != nil {
+		return nil, nil, err
+	}
+	if len(images) > 0 {
+		if err := setSection(root, "images", images); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := d.writeChangedSections(root); err != nil {
+		return nil, nil, err
+	}
+	return root, payload, nil
 }
 
 // bufferViewGCSafe reports whether the writer knows every place a buffer view

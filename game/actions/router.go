@@ -152,7 +152,27 @@ func (r *Router) Update(dt time.Duration) {
 	}
 }
 
+// Tee returns a Sink that feeds each event, and each ReleaseAll, to every
+// sink in order: one keyboard and one pad poll serve a player's Map, a hand
+// tracker and a seats layer at once.
+func Tee(sinks ...Sink) Sink { return tee(append([]Sink(nil), sinks...)) }
+
+type tee []Sink
+
+func (t tee) Feed(ev Event) {
+	for _, s := range t {
+		s.Feed(ev)
+	}
+}
+
+func (t tee) ReleaseAll() {
+	for _, s := range t {
+		s.ReleaseAll()
+	}
+}
+
 var (
 	_ Sink = (*Map)(nil)
 	_ Sink = (*Router)(nil)
+	_ Sink = tee(nil)
 )

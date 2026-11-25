@@ -880,3 +880,212 @@ test("reflected shear reverses complete triangles and preserves the tangent fram
   ];
   assert.ok(face[0] * n[0] + face[1] * n[1] + face[2] * n[2] > 0, "reflected face stays front-facing");
 });
+
+// --- per-model morph weights (Model.MorphWeights) -----------------------------
+
+test("a retained load keeps morph targets and their names for per-model weights", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const result = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var plainScene = gltfExtractScene(morphDoc, buffer);
+    var kept = gltfExtractScene(morphDoc, buffer, true);
+    var after = gltfExtractScene(morphDoc, buffer);
+    ({
+      plainMeta: Boolean(plainScene.objects[0]._morphAnim),
+      keptNames: kept.objects[0]._morphAnim && kept.objects[0]._morphAnim.targetNames,
+      keptDefaults: kept.objects[0]._morphAnim && kept.objects[0]._morphAnim.defaults,
+      samePositions: JSON.stringify(Array.from(kept.objects[0].vertices.positions)) === JSON.stringify(Array.from(plainScene.objects[0].vertices.positions)),
+      afterMeta: Boolean(after.objects[0]._morphAnim),
+    });
+  `));
+  assert.equal(result.plainMeta, false, "a plain load folds static targets and drops them");
+  assert.deepEqual(result.keptNames, ["mass", "belly"]);
+  assert.deepEqual(result.keptDefaults, [0.5, 0.25]);
+  assert.equal(result.samePositions, true, "the kept copy starts at the authored shape");
+  assert.equal(result.afterMeta, false, "the flag does not leak into the next load");
+});
+
+test("per-model morph weights fold per instance, by name or index, and only when they change", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const result = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    function entry() {
+      // As the mount builds it: the extracted, authored fold.
+      return { meta: meta, vertices: { positions: gltfFoldAnimatedMorphStreams(meta, meta.defaults).positions }, skinned: true, lastWeights: meta.defaults.slice() };
+    }
+    function fold(weights) { return Array.from(gltfFoldAnimatedMorphStreams(meta, weights).positions); }
+    var a = entry(), b = entry();
+    var heavy = { mass: 1 };
+    gltfApplyAnimatedMorphPose([a], null, null, heavy);
+    gltfApplyAnimatedMorphPose([b], null, null, null);
+    var aHeavy = Array.from(a.vertices.positions);
+    var bAuthored = Array.from(b.vertices.positions);
+    var heavyArray = a.vertices.positions;
+    gltfApplyAnimatedMorphPose([a], null, null, heavy);
+    var unchanged = a.vertices.positions === heavyArray;
+    gltfApplyAnimatedMorphPose([a], null, null, { mass: 0, belly: 0 });
+    var slim = Array.from(a.vertices.positions);
+    gltfApplyAnimatedMorphPose([a], null, null, { nope: 1, mass: NaN });
+    var ignored = Array.from(a.vertices.positions);
+    var animated = new Map([[meta.nodeIndex, { weights: [0.75, 0.25] }]]);
+    var c = entry();
+    gltfApplyAnimatedMorphPose([c], animated, null, heavy);
+    var clipWins = Array.from(c.vertices.positions);
+    meta.targetNames = null;
+    var d = entry();
+    gltfApplyAnimatedMorphPose([d], null, null, { "0": 1 });
+    var byIndex = Array.from(d.vertices.positions);
+    ({ aHeavy, bAuthored, unchanged, slim, ignored, clipWins, byIndex,
+       wantHeavy: fold([1, 0.25]), wantSlim: fold([0, 0]), wantAuthored: fold([0.5, 0.25]), wantClip: fold([0.75, 0.25]) });
+  `));
+  const r6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
+  assert.deepEqual(r6(result.aHeavy), r6(result.wantHeavy), "mass overrides target 0; belly keeps its authored weight");
+  assert.deepEqual(r6(result.bAuthored), r6(result.wantAuthored), "an instance without weights keeps the authored shape");
+  assert.equal(result.unchanged, true, "the same weights object does not fold again");
+  assert.deepEqual(r6(result.slim), r6(result.wantSlim));
+  assert.deepEqual(r6(result.ignored), r6(result.wantAuthored), "unknown names and non-finite values fall back to authored");
+  assert.deepEqual(r6(result.clipWins), r6(result.wantClip), "an animated weight wins over the model's own");
+  assert.deepEqual(r6(result.byIndex), r6(result.wantHeavy), "without names a whole-number key picks by index");
+});
+
+test("a skinned morph snapshot advances its revision only when a fold writes new streams", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const result = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    function entry(vertices) {
+      vertices.positions = gltfFoldAnimatedMorphStreams(meta, meta.defaults).positions;
+      return { meta: meta, vertices: vertices, skinned: true, lastWeights: meta.defaults.slice() };
+    }
+    var snap = entry({ immutable: true, revision: 0 }), loose = entry({});
+    var heavy = { mass: 1 };
+    var revisions = [];
+    gltfApplyAnimatedMorphPose([snap, loose], null, null, heavy);
+    revisions.push(snap.vertices.revision);
+    gltfApplyAnimatedMorphPose([snap, loose], null, null, heavy);
+    revisions.push(snap.vertices.revision);
+    gltfApplyAnimatedMorphPose([snap, loose], null, null, { mass: 0 });
+    revisions.push(snap.vertices.revision);
+    ({ revisions: revisions, looseRevision: loose.vertices.revision });
+  `));
+  assert.deepEqual(result.revisions, [1, 1, 2], "one revision per fold, none for the same weights");
+  assert.equal(result.looseRevision, undefined, "a mutable stream keeps no revision");
+});
+
+test("gear merged into a skinned morph entry rides after the body and survives a fold", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const r = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    var f0 = gltfFoldAnimatedMorphStreams(meta, meta.defaults);
+    var n = f0.positions.length / 3;
+    var vertices = { count: n, positions: f0.positions, normals: f0.normals, tangents: f0.tangents, uvs: new Float32Array(n * 2).fill(0.5),
+      joints: new Float32Array(n * 4), weights: new Float32Array(n * 4).fill(1), indices: null, immutable: true, revision: 0 };
+    var entry = { meta: meta, vertices: vertices, skinned: true, lastWeights: meta.defaults.slice() };
+    var piece = { count: 3, positions: new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9]), normals: new Float32Array(9).fill(0.25), uvs: new Float32Array(6).fill(0.75),
+      joints: new Float32Array(12).fill(2), weights: new Float32Array(12).fill(1), tangents: null, indices: null };
+    gltfMergeGear(entry, [piece]);
+    var merged = { count: vertices.count, positions: Array.from(vertices.positions), tail: Array.from(vertices.positions.slice(n * 3)),
+      tailJoints: Array.from(vertices.joints.slice(n * 4, n * 4 + 4)), tailUV: Array.from(vertices.uvs.slice(n * 2, n * 2 + 2)),
+      tailTangent: Array.from(vertices.tangents.slice(n * 4, n * 4 + 4)), revision: vertices.revision, n: n, body: Array.from(f0.positions) };
+    gltfApplyAnimatedMorphPose([entry], null, null, { mass: 1 });
+    var heavy = gltfFoldAnimatedMorphStreams(meta, [1, 0.25]);
+    var folded = { count: vertices.count, head: Array.from(vertices.positions.slice(0, n * 3)), tail: Array.from(vertices.positions.slice(n * 3)),
+      revision: vertices.revision, want: Array.from(heavy.positions) };
+    gltfMergeGear(entry, []);
+    var restored = { count: vertices.count, positions: Array.from(vertices.positions), revision: vertices.revision };
+    ({ merged: merged, folded: folded, restored: restored });
+  `));
+  const r6 = (a) => a.map((v) => Math.round(v * 1e6) / 1e6);
+  assert.equal(r.merged.count, r.merged.n + 3);
+  assert.deepEqual(r6(r.merged.positions.slice(0, r.merged.n * 3)), r6(r.merged.body), "the body part is untouched");
+  assert.deepEqual(r.merged.tail, [1, 2, 3, 4, 5, 6, 7, 8, 9], "the gear follows the body");
+  assert.deepEqual(r.merged.tailJoints, [2, 2, 2, 2], "the gear keeps its own joint");
+  assert.deepEqual(r.merged.tailUV, [0.75, 0.75]);
+  assert.deepEqual(r.merged.tailTangent, [1, 0, 0, 1], "a piece without tangents gets a default");
+  assert.equal(r.merged.revision, 1);
+  assert.equal(r.folded.count, r.merged.n + 3);
+  assert.deepEqual(r6(r.folded.head), r6(r.folded.want), "a fold rewrites the body part");
+  assert.deepEqual(r.folded.tail, [1, 2, 3, 4, 5, 6, 7, 8, 9], "and leaves the gear alone");
+  assert.equal(r.folded.revision, 2);
+  assert.equal(r.restored.count, r.merged.n, "no gear leaves the body alone");
+  assert.deepEqual(r6(r.restored.positions), r6(r.folded.want));
+  assert.equal(r.restored.revision, 3);
+});
+
+test("a frame folds at most four skinned morph entries and the rest fold on the next pose", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const r = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    function entry() {
+      return { meta: meta, vertices: { positions: gltfFoldAnimatedMorphStreams(meta, meta.defaults).positions }, skinned: true, lastWeights: meta.defaults.slice() };
+    }
+    var heavy = { mass: 1 };
+    var entries = [];
+    for (var i = 0; i < 6; i++) entries.push(entry());
+    var folded = function() { return entries.filter(function(e) { return e.lastFolded; }).length; };
+    var now = 1000;
+    globalThis.performance = { now: function() { return now; } };
+    for (var i = 0; i < 6; i++) gltfApplyAnimatedMorphPose([entries[i]], null, null, heavy);
+    var first = folded();
+    now += 20;
+    for (var i = 0; i < 6; i++) gltfApplyAnimatedMorphPose([entries[i]], null, null, heavy);
+    var second = folded();
+    ({ first: first, second: second });
+  `));
+  assert.equal(r.first, 4, "four fold in the first frame");
+  assert.equal(r.second, 6, "the other two fold in the next frame");
+});
+
+test("merged normals and tangents equal the unmerged ones for the body and for the gear, after a merge, a fold and a substitution", () => {
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
+  const r = plain(call(context, `
+    morphDoc.meshes[0].extras = { targetNames: ["mass", "belly"] };
+    var meta = gltfExtractScene(morphDoc, buffer, true).objects[0]._morphAnim;
+    var f0 = gltfFoldAnimatedMorphStreams(meta, meta.defaults);
+    var n = f0.positions.length / 3;
+    var vertices = { count: n, positions: f0.positions, normals: f0.normals, tangents: f0.tangents, uvs: new Float32Array(n * 2),
+      joints: new Float32Array(n * 4), weights: new Float32Array(n * 4).fill(1), indices: null, immutable: true, revision: 0 };
+    var entry = { meta: meta, vertices: vertices, skinned: true, lastWeights: meta.defaults.slice() };
+    function piece(count, normal, tangent) {
+      var normals = new Float32Array(count * 3), tangents = new Float32Array(count * 4);
+      for (var i = 0; i < count; i++) { normals.set(normal, i * 3); tangents.set(tangent, i * 4); }
+      return { count: count, positions: new Float32Array(count * 3), normals: normals, uvs: new Float32Array(count * 2),
+        joints: new Float32Array(count * 4), weights: new Float32Array(count * 4).fill(1), tangents: tangents, indices: null };
+    }
+    function parts() { return { head: Array.from(vertices.normals.slice(0, n * 3)), headT: Array.from(vertices.tangents.slice(0, n * 4)),
+      tail: Array.from(vertices.normals.slice(n * 3)), tailT: Array.from(vertices.tangents.slice(n * 4)), count: vertices.count }; }
+    var mask = piece(3, [0, 0, 1], [1, 0, 0, -1]), glove = piece(2, [0, 1, 0], [0, 0, 1, 1]);
+    gltfMergeGear(entry, [mask]);
+    var afterMerge = parts();
+    gltfApplyAnimatedMorphPose([entry], null, null, { mass: 1 });
+    var heavy = gltfFoldAnimatedMorphStreams(meta, [1, 0.25]);
+    var afterFold = parts();
+    gltfMergeGear(entry, [glove, mask]);
+    var afterSwap = parts();
+    gltfMergeGear(entry, []);
+    var bare = parts();
+    ({ n: n, base: Array.from(f0.normals), baseT: Array.from(f0.tangents), heavy: Array.from(heavy.normals), heavyT: Array.from(heavy.tangents),
+       afterMerge: afterMerge, afterFold: afterFold, afterSwap: afterSwap, bare: bare });
+  `));
+  const r6 = (a) => a.map((v) => Math.round(v * 1e6) / 1e6);
+  assert.deepEqual(r6(r.afterMerge.head), r6(r.base), "the body normals survive the merge");
+  assert.deepEqual(r6(r.afterMerge.headT), r6(r.baseT), "and its tangents");
+  assert.deepEqual(r.afterMerge.tail, [0, 0, 1, 0, 0, 1, 0, 0, 1], "the gear keeps its own normals");
+  assert.deepEqual(r.afterMerge.tailT, [1, 0, 0, -1, 1, 0, 0, -1, 1, 0, 0, -1], "and tangent handedness");
+  assert.deepEqual(r6(r.afterFold.head), r6(r.heavy), "a fold rewrites the body normals");
+  assert.deepEqual(r6(r.afterFold.headT), r6(r.heavyT), "and tangents");
+  assert.deepEqual(r.afterFold.tail, r.afterMerge.tail, "and leaves the gear alone");
+  assert.deepEqual(r.afterSwap.tail, [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1], "a substitution brings the new gear's normals in order");
+  assert.deepEqual(r6(r.afterSwap.head), r6(r.heavy), "the body keeps its folded normals through it");
+  assert.equal(r.bare.count, r.n);
+  assert.deepEqual(r6(r.bare.head), r6(r.heavy), "bare again, the body normals are the folded ones");
+});

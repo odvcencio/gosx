@@ -196,6 +196,7 @@ test("webgpu morph shader: tangent-w line uses mix with no select", function () 
 });
 
 function makeWebGPUSandbox() {
+  var tracked = new Set();
   var sandbox = {
     sceneNumber: function (value, fallback) {
       var n = typeof value === "number" ? value : Number(value);
@@ -204,7 +205,7 @@ function makeWebGPUSandbox() {
     wgpuTrackedBufferSize: function (buffer) {
       return buffer && typeof buffer.size === "number" ? buffer.size : 0;
     },
-    wgpuCreateTrackedBuffer: function (usage, bytes) {
+    wgpuCreateTrackedBuffer: function (meshState, device, usage, bytes) {
       return {
         usage: usage,
         size: bytes,
@@ -219,7 +220,9 @@ function makeWebGPUSandbox() {
       VERTEX: 32,
       COPY_DST: 8,
     },
-    pointsEntryGPUBuffers: new Set(),
+    device: null,
+    meshState: { pointsEntryGPUBuffers: tracked },
+    pointsEntryGPUBuffers: tracked,
   };
   vm.runInNewContext(extractFn(webgpuSrc, "webGPUComputedMorphEnsureOutputBuffer"), sandbox);
   return sandbox;
@@ -234,14 +237,14 @@ test("webgpu computed morph ensure output buffer: staleness, reuse, and undersiz
   var sb = makeWebGPUSandbox();
   var staleBuffer = { size: 16, destroyCount: 0, destroy: function () { this.destroyCount++; } };
   var record = { output: staleBuffer, bindGroup: { label: "dead-device-group" } };
-  var buffer = sb.wgpuCreateTrackedBuffer(expectedUsage, 16);
+  var buffer = sb.wgpuCreateTrackedBuffer(sb.meshState, sb.device, expectedUsage, 16);
   sb.pointsEntryGPUBuffers.add(buffer);
-  sb.wgpuCreateTrackedBuffer = function (usage, bytes) {
+  sb.wgpuCreateTrackedBuffer = function (meshState, device, usage, bytes) {
     assert.equal(usage, expectedUsage, "replacement uses STORAGE | VERTEX | COPY_DST usage");
     assert.equal(bytes, 16, "replacement sized for count/components");
     return buffer;
   };
-  var result = sb.webGPUComputedMorphEnsureOutputBuffer(record, "output", 1, 4);
+  var result = sb.webGPUComputedMorphEnsureOutputBuffer(sb.meshState, sb.device, record, "output", 1, 4);
   assert.equal(record.output, buffer, "stale buffer replaced and tracked via record[slot]");
   assert.equal(result, buffer, "returns the fresh buffer");
   assert.equal(record.bindGroup, null, "bindGroup invalidated on stale buffer");
@@ -251,7 +254,7 @@ test("webgpu computed morph ensure output buffer: staleness, reuse, and undersiz
   // (2) Adequate buffer already present in the tracked set is reused with no
   // allocation or destruction.
   sb = makeWebGPUSandbox();
-  var reusable = sb.wgpuCreateTrackedBuffer(expectedUsage, 16);
+  var reusable = sb.wgpuCreateTrackedBuffer(sb.meshState, sb.device, expectedUsage, 16);
   sb.pointsEntryGPUBuffers.add(reusable);
   var destroyCalls = 0;
   reusable.destroy = function () { destroyCalls++; };
@@ -261,7 +264,7 @@ test("webgpu computed morph ensure output buffer: staleness, reuse, and undersiz
     created++;
     throw new Error("must not allocate when adequate live buffer exists");
   };
-  result = sb.webGPUComputedMorphEnsureOutputBuffer(record, "output", 1, 4);
+  result = sb.webGPUComputedMorphEnsureOutputBuffer(sb.meshState, sb.device, record, "output", 1, 4);
   assert.equal(result, reusable, "live adequate buffer reused");
   assert.equal(record.output, reusable);
   assert.equal(created, 0, "no allocation on reuse path");
@@ -271,19 +274,19 @@ test("webgpu computed morph ensure output buffer: staleness, reuse, and undersiz
   // (3) Undersized live buffer is removed from the set, destroyed once, and
   // replaced with a properly sized tracked buffer.
   sb = makeWebGPUSandbox();
-  var undersized = sb.wgpuCreateTrackedBuffer(expectedUsage, 4);
+  var undersized = sb.wgpuCreateTrackedBuffer(sb.meshState, sb.device, expectedUsage, 4);
   sb.pointsEntryGPUBuffers.add(undersized);
   var destroyed = 0;
   undersized.destroy = function () { destroyed++; };
   record = { output: undersized, bindGroup: { label: "old" } };
-  var replacement = sb.wgpuCreateTrackedBuffer(expectedUsage, 16);
+  var replacement = sb.wgpuCreateTrackedBuffer(sb.meshState, sb.device, expectedUsage, 16);
   sb.pointsEntryGPUBuffers.add(replacement);
-  sb.wgpuCreateTrackedBuffer = function (usage, bytes) {
+  sb.wgpuCreateTrackedBuffer = function (meshState, device, usage, bytes) {
     assert.equal(usage, expectedUsage);
     assert.equal(bytes, 16, "replacement sized for larger count");
     return replacement;
   };
-  result = sb.webGPUComputedMorphEnsureOutputBuffer(record, "output", 1, 4);
+  result = sb.webGPUComputedMorphEnsureOutputBuffer(sb.meshState, sb.device, record, "output", 1, 4);
   assert.equal(result, replacement, "returns replacement buffer");
   assert.equal(record.output, replacement, "record tracks replacement");
   assert.equal(destroyed, 1, "undersized live buffer destroyed exactly once");

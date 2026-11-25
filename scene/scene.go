@@ -105,9 +105,14 @@ type Environment struct {
 	// AutoExposure adapts exposure to the scene's brightness over time. Nil
 	// keeps Exposure fixed. See exposure.go.
 	AutoExposure *AutoExposure
-	ToneMapping  string // "aces", "reinhard", "linear", "" (default = aces)
-	FogColor     string
-	FogDensity   float64 // for exponential fog (0 = no fog)
+	ToneMapping  string // "aces", "reinhard", "filmic", "agx", "gt", "linear", "" (default = aces)
+	// LightModel "physical" decodes light, ambient, hemisphere and fog colours
+	// from sRGB to linear, and lights ambient and hemisphere terms as indirect
+	// diffuse: no light on metals, and darkened by ambient occlusion. Empty
+	// (default): the legacy flat model.
+	LightModel string
+	FogColor   string
+	FogDensity float64 // for exponential fog (0 = no fog)
 	// Crowds are stadium, arena and concert audiences. See crowd.go and
 	// docs/scene3d-crowd.md.
 	Crowds     []Crowd
@@ -280,11 +285,15 @@ type Props struct {
 	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
 	AdaptiveWarmupFrames  int     `json:"adaptiveWarmupFrames,omitempty"`
 	AdaptivePostFX        *bool   `json:"adaptivePostFX,omitempty"`
-	MSAASamples           int     `json:"msaaSamples,omitempty"`
-	WebGPUAlphaMode       string  `json:"webgpuAlphaMode,omitempty"`
-	WebGPUColorSpace      string  `json:"webgpuColorSpace,omitempty"`
-	WebGPUToneMapping     string  `json:"webgpuToneMapping,omitempty"`
-	WebGPUPowerPreference string  `json:"webgpuPowerPreference,omitempty"`
+	// AdaptiveBudget "gpu" governs AdaptiveQuality by GPU time alone when the
+	// renderer has a GPU timer, so a frame that is slow on the CPU keeps its
+	// resolution and effects. Empty (default): the slower of CPU and GPU time.
+	AdaptiveBudget        string `json:"adaptiveBudget,omitempty"`
+	MSAASamples           int    `json:"msaaSamples,omitempty"`
+	WebGPUAlphaMode       string `json:"webgpuAlphaMode,omitempty"`
+	WebGPUColorSpace      string `json:"webgpuColorSpace,omitempty"`
+	WebGPUToneMapping     string `json:"webgpuToneMapping,omitempty"`
+	WebGPUPowerPreference string `json:"webgpuPowerPreference,omitempty"`
 	Camera                PerspectiveCamera
 	OrthographicCamera    *OrthographicCamera
 	Stats                 *bool `json:"stats,omitempty"`
@@ -1296,10 +1305,38 @@ type Model struct {
 	// skin. Vertical (Y) translation is kept, so crouches and hip height still
 	// animate. Rotation and scale are never altered.
 	RootMotion bool
-	Transition Transition
-	InState    *ModelProps
-	OutState   *ModelProps
-	Live       []string
+	// MorphWeights sets morph-target weights for this model alone, so models
+	// that share one GLB can have different shapes (a heavier or a slimmer
+	// body, say). Each key is a morph target name from the mesh's
+	// extras.targetNames, the usual glTF convention. If a mesh has no
+	// targetNames, a key that is a whole number ("0", "1") picks the target
+	// by index instead. A listed target takes the given weight in place of
+	// the weight the GLB authors; targets that are not listed keep the
+	// authored weight. Names that match no target are ignored. A clip that
+	// animates a target's weight wins over this value.
+	//
+	// Every model with MorphWeights and the same Src shares one loaded copy
+	// that keeps the morph targets; each model folds its own weights into
+	// its own vertices, before skinning. PatchModelsCommand changes them
+	// later without loading the model again. Models with no MorphWeights
+	// share the GLB's authored shape, as before. Instanced crowds
+	// (InstancedGLBMesh) do not read this field.
+	MorphWeights map[string]float64
+	// Attachments fix gear meshes to joints of this model's skin (Attachment).
+	Attachments []Attachment
+	// JointScales scales joints of this model's skin alone, by joint (node)
+	// name, so models that share one GLB and one rig can differ in the size
+	// of a part: a larger head on a heavier body, say. Each factor scales the
+	// joint's local frame evenly on all three axes, on top of the pose, so it
+	// scales the vertices the joint moves, the gear fixed to it
+	// (Attachments) and every joint below it. Names that match no node and
+	// factors that are not positive are ignored. PatchModelsCommand changes
+	// them later.
+	JointScales map[string]float64
+	Transition  Transition
+	InState     *ModelProps
+	OutState    *ModelProps
+	Live        []string
 }
 
 // Decal projects a planar texture or color marker into the scene. The initial
@@ -2144,6 +2181,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "adaptiveTargetFrameMS", p.AdaptiveTargetFrameMS)
 	setInt(out, "adaptiveWarmupFrames", p.AdaptiveWarmupFrames)
 	setBool(out, "adaptivePostFX", p.AdaptivePostFX)
+	setString(out, "adaptiveBudget", p.AdaptiveBudget)
 	setInt(out, "msaaSamples", p.MSAASamples)
 	setString(out, "webgpuAlphaMode", p.WebGPUAlphaMode)
 	setString(out, "webgpuColorSpace", p.WebGPUColorSpace)
@@ -3837,6 +3875,9 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.Loop = model.Loop
 	record.ClipSampled = model.ClipSampled
 	record.RootMotion = model.ClipSampled && model.RootMotion
+	record.MorphWeights = finiteMorphWeights(model.MorphWeights)
+	record.Attachments = lowerAttachments(model.Attachments)
+	record.JointScales = positiveJointScales(model.JointScales)
 	l.models = append(l.models, record)
 	l.anchors[id] = world
 }

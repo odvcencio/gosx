@@ -362,3 +362,72 @@ func TestPlaybackVolumeAndRateFallBackToClipDefaults(t *testing.T) {
 		t.Fatalf("rate = %v, want 2 (playback override)", host.lastSource.rate)
 	}
 }
+
+type fakeParam struct {
+	events     []string
+	target, at float64
+}
+
+func (p *fakeParam) SetAt(v, at float64) error { p.events = append(p.events, "set"); return nil }
+func (p *fakeParam) LinearRamp(v, at float64) error {
+	p.events = append(p.events, "ramp")
+	p.target, p.at = v, at
+	return nil
+}
+func (p *fakeParam) ExponentialRamp(v, at float64) error { return nil }
+func (p *fakeParam) HoldAt(at float64) error             { p.events = append(p.events, "hold"); return nil }
+
+type fakeAutomatedGain struct {
+	*fakeGain
+	param *fakeParam
+}
+
+func (g *fakeAutomatedGain) Gain() Parameter { return g.param }
+
+type fakeAutomatingHost struct {
+	*fakeHost
+	gains []*fakeAutomatedGain
+}
+
+func (h *fakeAutomatingHost) CreateGain() GainNode {
+	g := &fakeAutomatedGain{fakeGain: h.fakeHost.CreateGain().(*fakeGain), param: &fakeParam{}}
+	h.gains = append(h.gains, g)
+	return g
+}
+
+func TestFadeOutRampsToSilenceThenStops(t *testing.T) {
+	host := &fakeAutomatingHost{fakeHost: newFakeHost()}
+	host.now = 10
+	p := NewPlayer(host, NewBusGraph(host, game.AudioManifest{}), nil)
+	p.RegisterBuffer(game.AudioClip{ID: "band"}, "band")
+	h, err := p.Play(game.AudioPlayback{Clip: "band", Volume: .8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := host.lastSource
+	p.FadeOut(h, .35)
+	g := host.gains[len(host.gains)-1]
+	if len(g.param.events) != 2 || g.param.events[0] != "hold" || g.param.events[1] != "ramp" || g.param.target != 0 || g.param.at != 10.35 {
+		t.Fatalf("fade: events %v target %v at %v, want hold then a ramp to 0 at 10.35", g.param.events, g.param.target, g.param.at)
+	}
+	if len(src.stopped) != 1 || src.stopped[0] != 10.35 {
+		t.Fatalf("stop times %v, want one stop when the fade ends at 10.35", src.stopped)
+	}
+	if p.Playing() != 0 {
+		t.Fatalf("%d voices still playing", p.Playing())
+	}
+	p.FadeOut(h, .35) // finished: no-op
+}
+
+func TestFadeOutWithoutAutomationStopsAtOnce(t *testing.T) {
+	host := newFakeHost()
+	host.now = 4
+	p := NewPlayer(host, NewBusGraph(host, game.AudioManifest{}), nil)
+	p.RegisterBuffer(game.AudioClip{ID: "band"}, "band")
+	h, _ := p.Play(game.AudioPlayback{Clip: "band"})
+	src := host.lastSource
+	p.FadeOut(h, .35)
+	if len(src.stopped) != 1 || src.stopped[0] != 4 {
+		t.Fatalf("stop times %v, want an immediate stop at 4", src.stopped)
+	}
+}

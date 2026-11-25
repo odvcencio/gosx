@@ -76,7 +76,13 @@ wrong frame when the two drift apart. Let the renderer own the frame instead:
 2. Create a `host.SceneFrameSource` for the Scene3D mount's element id.
 3. Drive the runtime with a `loop.Driver` on that source.
 4. In the render callback, write this frame's poses through a
-   `scene.StreamWriter` (the binary instance stream).
+   `scene.StreamWriter` (the binary instance stream) and the camera through a
+   `scene.CameraWriter`.
+
+Do not call `Scene3D.SetCamera`, `Dispatch`, `Live` or `Ready` inside the
+render callback. Each waits on a promise, and the callback runs inside a
+JavaScript call, where Go cannot wait for one. `CameraWriter`, `StreamWriter`
+and `animgraph.Dispatch` return before the renderer builds the frame.
 
 ```go
 rt := game.New(game.Config{
@@ -96,6 +102,9 @@ driver.Start(func(alpha float64, frame game.Frame) {
         BatchID: "units", Revision: frame.Index, Kind: scene.InstanceStreamTransform,
         Count: len(units), Data: interpolatedMatrices(alpha),
     })
+    if camera.Prepare() { // camera := scene.NewCameraWriter("arena")
+        _, _ = camera.ApplyPerspective(director.Update(frame.Delta.Seconds()).Perspective(0.1, 500))
+    }
 })
 defer driver.Stop()
 ```
@@ -146,9 +155,37 @@ Per-frame data takes binary paths. Avoid the JSON ones in a frame loop:
 | Per-frame work | Use | Not |
 |---|---|---|
 | Instance transforms | `scene.StreamWriter.Apply` (one copy into a reused JS buffer, applied synchronously) | `Scene3D.Dispatch` (JSON, one promise per call) |
+| Camera | `scene.CameraWriter.Apply` (synchronous; writes only the fields that changed) | `Scene3D.SetCamera` (JSON, and it waits on a promise) |
+| Skinned characters and where they stand | `animgraph.Dispatch` with `Instance.SetRoot` (one binary frame for pose and placement) | a pose frame plus a transform command per character |
 | Frame scheduling | `FrameSourceJS` and `SceneFrameSource` (one `js.Func` for the source's life, one browser request per frame) | a new `js.FuncOf` per frame |
 | Gamepads | `host.NewGamepadReader()` (reused buffers; reads a pad again only when its timestamp changes) with `gamepad.Poller` | `host.NavigatorSource{}` (fresh slices every poll) |
 | Worker input | `host.NewForwardedInput()` (one binary record per event through `__gosx.worker.onInputBytes`) | parsing the JSON of `onInput` |
 
 `game.Runtime.Step` itself allocates nothing in steady state, and it runs the
 scene builder only after `InvalidateScene` (see `game/README.md`).
+
+### A frame-rate readout for the player
+
+The mount keeps a frame meter over its last 120 drawn frames (about two
+seconds at 60 frames a second): when each frame was drawn, the main thread's
+work for it (from the frame's start, the engine's hook included, until the
+renderer submitted it), and the GPU's time whenever the renderer's GPU timer
+reported one (WebGPU timestamps, or `EXT_disjoint_timer_query_webgl2` on
+WebGL). Recording costs a few stores a frame; the statistics are worked out
+only when read. A game reads it to show the player his own numbers:
+
+```go
+surface := scene.NewSurface("arena")
+stats, err := surface.FrameStats() // twice a second is plenty
+if err == nil {
+	line := fmt.Sprintf("%.0f fps · CPU %.1f ms · GPU %.1f ms · %s · %s",
+		stats.FPS, stats.CPUMS, stats.GPUMS, stats.Tier, stats.Backend)
+	_ = line
+}
+```
+
+`GPUTimer` is empty, and the GPU times are 0, when the browser exposes no GPU
+timer. `Adapter` is the GPU as the browser names it, `Tier` the quality tier
+the governor chose. The GPU time is sampled only while the mount has a quality
+governor (`AdaptiveBudget` or a quality ladder), because the governor polls the
+timer and the meter keeps what it read.

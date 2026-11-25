@@ -4,6 +4,7 @@ package kernel
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strconv"
@@ -34,8 +35,15 @@ type Config struct {
 	Info  worklet.ImageInfo
 	// ProcessorPrefix is the URL prefix where worklet.Handler is mounted, with
 	// a trailing slash, for example "/assets/". The processor loads from
-	// ProcessorPrefix + worklet.Path(). Required.
+	// ProcessorPrefix + worklet.Path(). Required unless InlineProcessor is set.
 	ProcessorPrefix string
+	// InlineProcessor loads the processor from the copy compiled into the
+	// program (worklet.DataURL) instead of from ProcessorPrefix. A static
+	// export has no server to mount worklet.Handler on, so set it there; it
+	// works from any folder and from the export's single HTML file opened from
+	// disk. A page whose Content-Security-Policy allows no data: scripts must
+	// serve worklet.Handler and set ProcessorPrefix instead.
+	InlineProcessor bool
 	// LatencyMS is the output latency the processor adds to its gap budget.
 	LatencyMS float64
 	// ReadyTimeout bounds initialization. Default 10 seconds.
@@ -54,8 +62,11 @@ type Node struct {
 	onFault   func(code uint16)
 	onTiming  func(worklet.Event)
 	nextReq   int
-	ready     chan struct{}
-	failed    chan struct{}
+	// latency is Config.LatencyMS. A timing request carries it, because the
+	// processor takes the request's latency as its gap budget from then on.
+	latency float64
+	ready   chan struct{}
+	failed  chan struct{}
 }
 
 // Start loads the processor module, compiles the kernel, creates the node,
@@ -69,8 +80,14 @@ func Start(cfg Config) (*Node, error) {
 	if !ok {
 		return nil, audiohost.ErrUnsupported
 	}
-	if cfg.ProcessorPrefix == "" {
-		return nil, errors.New("audio/kernel: Config.ProcessorPrefix is required")
+	var processor string
+	switch {
+	case cfg.InlineProcessor:
+		processor = worklet.DataURL()
+	case cfg.ProcessorPrefix != "":
+		processor = cfg.ProcessorPrefix + worklet.Path()
+	default:
+		return nil, errors.New("audio/kernel: Config.ProcessorPrefix or Config.InlineProcessor is required")
 	}
 	if err := cfg.Backend.Validate(); err != nil {
 		return nil, err
@@ -86,14 +103,14 @@ func Start(cfg Config) (*Node, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	if err := host.AddWorkletModule(cfg.ProcessorPrefix + worklet.Path()); err != nil {
+	if err := host.AddWorkletModule(processor); err != nil {
 		return nil, err
 	}
 	module, err := host.CompileWASM(cfg.WASM)
 	if err != nil {
 		return nil, err
 	}
-	n := &Node{host: host, b: cfg.Backend, ready: make(chan struct{}), failed: make(chan struct{})}
+	n := &Node{host: host, b: cfg.Backend, latency: cfg.LatencyMS, ready: make(chan struct{}), failed: make(chan struct{})}
 	node, err := host.NewWASMWorklet(audiohost.WASMWorkletOptions{
 		Module: module, Image: cfg.Image, Backend: cfg.Backend, Info: cfg.Info,
 		ID: "kernel", LatencyMS: cfg.LatencyMS,
@@ -153,8 +170,23 @@ func decode(data js.Value) worklet.Event {
 		ev.Underruns = data.Get("u").Int()
 		ev.MemoryBytes = data.Get("m").Int()
 		ev.Frames = data.Get("f").Float()
+		ev.Histogram = histogram(data.Get("d"))
 	}
 	return ev
+}
+
+// histogram copies the processor's timing histogram, a Uint32Array.
+func histogram(d js.Value) []uint32 {
+	if d.Type() != js.TypeObject || d.Get("BYTES_PER_ELEMENT").Int() != 4 {
+		return nil
+	}
+	raw := make([]byte, d.Get("byteLength").Int())
+	js.CopyBytesToGo(raw, js.Global().Get("Uint8Array").New(d.Get("buffer"), d.Get("byteOffset"), len(raw)))
+	out := make([]uint32, len(raw)/4)
+	for i := range out {
+		out[i] = binary.LittleEndian.Uint32(raw[i*4:])
+	}
+	return out
 }
 
 func (n *Node) onMessage(data js.Value) {
@@ -243,9 +275,12 @@ func (n *Node) Replace(image []byte, info worklet.ImageInfo) error {
 }
 
 // RequestTiming asks the processor for its CPU-time histogram and underrun
-// count; the reply goes to the OnTiming handler.
+// count; the reply goes to the OnTiming handler. The request restates
+// Config.LatencyMS: the processor counts a render call as an underrun when it
+// comes later than that latency plus one block, and a request without it
+// would set the latency to zero.
 func (n *Node) RequestTiming() error {
-	return n.node.PostMessage(map[string]any{"t": "q", "l": 0})
+	return n.node.PostMessage(map[string]any{"t": "q", "l": n.latency})
 }
 
 // ResetTiming clears the processor's CPU-time histogram.

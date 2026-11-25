@@ -47,7 +47,11 @@ export function encodeFrame(models) {
   u16(names.length); names.forEach(str);
   u16(models.length);
   for (const m of models) {
-    str(m.id); u32(m.rigHash || 0); f32(m.dt || 0); u8(m.detail || 0);
+    // root: [x, y, z, yaw] sets flag bit 2; hold (placement only) sets bit 3
+    // and ends the model's entry after the root.
+    str(m.id); u32(m.rigHash || 0); f32(m.dt || 0); u8((m.detail || 0) | (m.root ? 4 : 0) | (m.hold ? 8 : 0));
+    if (m.root) m.root.forEach(f32);
+    if (m.hold) continue;
     u8((m.layers || []).length);
     for (const l of m.layers || []) {
       f32(l.weight); u8(l.samples.length);
@@ -190,6 +194,33 @@ test("decoder reads the Go encoder's golden frame", () => {
   assert.deepEqual(Array.from(m.look[0].target), [0, 1.5, 4]);
 });
 
+test("decoder reads root placements and placement-only models from the Go golden frame", () => {
+  const { api } = loadChunk();
+  const hex = fs.readFileSync(path.join(here, "..", "..", "motion", "animgraph", "testdata", "frame-root.golden.hex"), "utf8").trim();
+  const frame = api.createDecoder()(Uint8Array.from(hex.match(/../g).map((h) => parseInt(h, 16))));
+  // The Go fixture (rootGoldenFrame in motion/animgraph/sampled_test.go):
+  // "runner" placed at (3.5, 0.125, -42) yaw 0.75 with a sampled layer of
+  // Walk at 0.25 s weight 0.75 and Run at 0.125 s weight 0.25, then "distant"
+  // at (-8, 0, 16.5) yaw -1.5 with its pose held.
+  assert.equal(frame.count, 2);
+  const runner = frame.models[0];
+  assert.equal(runner.id, "runner");
+  assert.equal(runner.hasRoot, true);
+  assert.equal(runner.hold, false);
+  assert.deepEqual(Array.from(runner.root), [3.5, 0.125, -42, 0.75]);
+  near(runner.dt, 0.03125, 0, "dt");
+  assert.equal(runner.layerCount, 1);
+  assert.equal(runner.layers[0].count, 2);
+  assert.deepEqual([runner.layers[0].samples[0].name, runner.layers[0].samples[0].time, runner.layers[0].samples[0].weight, runner.layers[0].samples[0].loop], ["Walk", 0.25, 0.75, true]);
+  assert.deepEqual([runner.layers[0].samples[1].name, runner.layers[0].samples[1].time, runner.layers[0].samples[1].weight, runner.layers[0].samples[1].loop], ["Run", 0.125, 0.25, true]);
+  const distant = frame.models[1];
+  assert.equal(distant.id, "distant");
+  assert.equal(distant.hasRoot, true);
+  assert.equal(distant.hold, true);
+  assert.deepEqual(Array.from(distant.root), [-8, 0, 16.5, -1.5]);
+  assert.deepEqual([distant.layerCount, distant.ikCount, distant.lookCount], [0, 0, 0]);
+});
+
 test("decoder rejects malformed frames", () => {
   const { api } = loadChunk();
   const decode = api.createDecoder();
@@ -200,6 +231,10 @@ test("decoder rejects malformed frames", () => {
   const bad = good.slice(); bad[3] = 49; // "GSA1", the previous layout
   assert.throws(() => decode(bad), /version/);
   assert.throws(() => decode(encodeFrame([{ id: "a" }, { id: "a" }])), /duplicate/);
+  // Model flags use bits 0 to 3; a placement-only entry must carry a root.
+  assert.throws(() => decode(encodeFrame([{ id: "a", detail: 16, ...base([]) }])), /invalid animation graph model flags/);
+  assert.throws(() => decode(encodeFrame([{ id: "a", hold: true }])), /placement-only animation graph model has no root/);
+  assert.throws(() => decode(encodeFrame([{ id: "a", root: [0, 0, Infinity, 0], ...base([]) }])), /non-finite/);
   assert.throws(() => decode(encodeFrame([{ id: "a", layers: Array.from({ length: 9 }, () => ({ weight: 1, samples: [] })) }])), /too many animation graph layers/);
   assert.throws(() => decode(encodeFrame([{ id: "a", ...base([{ name: "Bob", time: -1, weight: 1 }]) }])), /invalid animation graph sample/);
 });
@@ -479,6 +514,85 @@ test("dispatch routes frames through the mount's clip-frame hook and reports fee
   assert.equal(scene3d.dispatchAnimationFrame("missing", bytes).reason, "not-ready");
 });
 
+test("a frame's root placement moves the model, and a placement-only entry keeps its pose", () => {
+  const { sandbox } = loadChunk();
+  sandbox.__gosx_scene3d_animation_api = {
+    configureSampledRecord(state, record) { record.clipSampler = { pose() { return true; }, sample(_l, _c, out) { return out; } }; },
+    applyClipFrame() { return { applied: true, pending: false }; },
+  };
+  vm.runInContext(transpile(read("..", "runtime", "scene3d", "command-runtime.ts")), vm.createContext(sandbox));
+  const { nodes, skins } = humanoid();
+  const record = { id: "hero", nodes, rootNodes: [0], skins, model: {}, rootTransform: null, poseDirty: false };
+  const state = { _modelSkins: [record] };
+  sandbox.__gosx_scene3d_animation_api.configureSampledRecord(state, record, clips(), {});
+  record.__animGraphClips = clips();
+  // A stand-in for the mount's live transform patch (sceneApplyModelLivePatch):
+  // it takes {x, y, z, rotationY}, builds a translation and a rotation about
+  // +Y (column-major), and marks the record dirty. The patch object is reused
+  // between calls, so the stand-in copies what it reads.
+  const placed = [];
+  const place = (st, rec, patch) => {
+    assert.equal(st, state);
+    assert.deepEqual(Object.keys(patch).sort(), ["rotationY", "x", "y", "z"]);
+    const { x, y, z, rotationY: yaw } = patch;
+    placed.push([rec.id, x, y, z, yaw]);
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    rec.rootTransform = new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, x, y, z, 1]);
+    rec.poseDirty = true;
+  };
+  let posed = 0;
+  const handle = {
+    __gosxScene3DCommandReady: true,
+    applyCommands() {},
+    applyClipFrame(models) {
+      return sandbox.__gosx_scene3d_command_bridge.applyMountedClipFrame(state, models, sandbox.__gosx_scene3d_animation_api, (rec) => { posed++; rec.clipSampler.pose(rec); }, () => {}, handle, place);
+    },
+  };
+  sandbox.__gosx.engines = new Map([["scene", { handle }]]);
+  const scene3d = sandbox.__gosx.scene3d;
+  scene3d.defineAnimationRig(7, JSON.stringify(RIG));
+  const hips = 0, leftFoot = 3; // joint indexes; inverse binds are identity
+  const jointPos = (joint) => Array.from(skins[0].jointMatrices.subarray(joint * 16 + 12, joint * 16 + 15));
+  const quarter = Math.fround(Math.PI / 2);
+
+  // Bob at 0.5 s lifts the hips to y = 1.1 (its X/Z travel is root motion and
+  // is dropped), so the left foot is at (0.1, 0.2, 0) in model space. Placed
+  // at (2, 0.5, -3) with a quarter turn about +Y, model +X points along -Z:
+  // hips (2, 1.6, -3), left foot (2, 0.7, -3.1).
+  const full = encodeFrame([{ id: "hero", rigHash: 7, root: [2, 0.5, -3, quarter], ...base([{ name: "Bob", time: 0.5, weight: 1 }]) }]);
+  assert.deepEqual({ ...scene3d.dispatchAnimationFrame("scene", full) }, { applied: true, pending: false });
+  assert.deepEqual(placed, [["hero", 2, 0.5, -3, quarter]]);
+  near(jointPos(hips), [2, 1.6, -3], 1e-5, "hips after the placed frame");
+  near(jointPos(leftFoot), [2, 0.7, -3.1], 1e-5, "left foot after the placed frame");
+  assert.equal(record.poseDirty, false, "the frame's own pose pass leaves nothing for the mount to redo");
+  const spine = Array.from(record.clipSampler.model.r.subarray(8 * 4, 8 * 4 + 4));
+
+  // A placement-only entry moves the model to (5, 0, 1) facing +Z and keeps
+  // the pose: hips (5, 1.1, 1), left foot (5.1, 0.2, 1), spine unchanged.
+  const hold = encodeFrame([{ id: "hero", rigHash: 7, root: [5, 0, 1, 0], hold: true }]);
+  assert.deepEqual({ ...scene3d.dispatchAnimationFrame("scene", hold) }, { applied: true, pending: false });
+  assert.deepEqual(placed[1], ["hero", 5, 0, 1, 0]);
+  assert.equal(posed, 2);
+  near(jointPos(hips), [5, 1.1, 1], 1e-5, "hips after the placement-only entry");
+  near(jointPos(leftFoot), [5.1, 0.2, 1], 1e-5, "left foot after the placement-only entry");
+  near(record.clipSampler.model.r.subarray(8 * 4, 8 * 4 + 4), spine, 0, "local pose kept");
+
+  // A frame without a root leaves the model where it is and stops placing.
+  const free = encodeFrame([{ id: "hero", rigHash: 7, ...base([{ name: "Bob", time: 0, weight: 1 }]) }]);
+  scene3d.dispatchAnimationFrame("scene", free);
+  assert.equal(placed.length, 2, "no placement without a root");
+  near(jointPos(hips), [5, 1, 1], 1e-5, "hips keep the last placement");
+
+  // A record that hydrates later starts at its holder's last root.
+  scene3d.dispatchAnimationFrame("scene", encodeFrame([{ id: "hero", rigHash: 7, root: [-4, 0, 9, 0], hold: true }]));
+  const again = humanoid();
+  const rehydrated = { id: "hero", nodes: again.nodes, rootNodes: [0], skins: again.skins, model: {}, rootTransform: null, poseDirty: false };
+  state._modelSkins = [rehydrated];
+  sandbox.__gosx_scene3d_animation_api.configureSampledRecord(state, rehydrated, clips(), {});
+  assert.deepEqual(placed[placed.length - 1], ["hero", -4, 0, 9, 0], "the re-hydrated record is placed before its first pose");
+  assert.deepEqual(Array.from(rehydrated.rootTransform.subarray(12, 15)), [-4, 0, 9]);
+});
+
 test("the animation API hook captures clips for records created after the chunk loads", () => {
   const { sandbox } = loadChunk();
   const captured = [];
@@ -609,6 +723,44 @@ test("bone scale enlarges a bone and carries its children", () => {
   // The eye's offset (0.03, 0.1, 0.08) from the head doubles.
   const head = pos(m, 9), eye = pos(m, 10);
   near([eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]], [0.06, 0.2, 0.16], 1e-6, "eye carried");
+});
+
+test("a model's own joint scales act like bone scale, and a new table poses again", () => {
+  const { api } = loadChunk();
+  const table = new Float64Array(13).fill(1);
+  table[9] = 2;
+  const { m, holder, record } = setup(api, base([]), { record: { jointScales: table } });
+  api.evaluate(m, holder);
+  const w = m.world, o = 9 * 16;
+  near(Math.hypot(w[o], w[o + 1], w[o + 2]), 2, 1e-6, "head scale");
+  const head = pos(m, 9), eye = pos(m, 10);
+  near([eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]], [0.06, 0.2, 0.16], 1e-6, "eye carried");
+  // Same frame, new table (a PatchModels command): the model poses again.
+  record.jointScales = null;
+  api.evaluate(m, holder);
+  near(Math.hypot(w[o], w[o + 1], w[o + 2]), 1, 1e-6, "head back to its size");
+});
+
+test("a joint with an authored matrix keeps its place and turn when its model scales it", () => {
+  const { api } = loadChunk();
+  // Head: 90 degrees about Y and 0.5 up, as a matrix with no TRS.
+  const head = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 1];
+  const shape = () => { const h = humanoid(); h.nodes[9] = { name: "Head", matrix: head.slice(), children: [10] }; return h; };
+  const table = new Float64Array(13).fill(1);
+  table[9] = 2;
+  const plain = setup(api, base([]));
+  const scaled = setup(api, base([]), { record: { jointScales: table } });
+  for (const f of [plain, scaled]) {
+    const h = shape();
+    f.record.nodes = h.nodes;
+    f.m = api.createModel(f.record, clips());
+    api.evaluate(f.m, f.holder);
+  }
+  near(pos(scaled.m, 9), pos(plain.m, 9), 1e-6, "the head stays where its matrix puts it");
+  const w = scaled.m.world, o = 9 * 16;
+  near([w[o], w[o + 1], w[o + 2]], [0, 0, -2], 1e-6, "turned 90 degrees and twice the size");
+  const head0 = pos(scaled.m, 9), eye = pos(scaled.m, 10), head1 = pos(plain.m, 9), eye1 = pos(plain.m, 10);
+  near([eye[0] - head0[0], eye[1] - head0[1], eye[2] - head0[2]], [2 * (eye1[0] - head1[0]), 2 * (eye1[1] - head1[1]), 2 * (eye1[2] - head1[2])], 1e-6, "the eye is carried twice as far");
 });
 
 test("keep proportions drops non-root translation keys from the model's clips", () => {

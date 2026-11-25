@@ -511,6 +511,8 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		// Opt-in animation graph chunk (motion/animgraph frames): introspection API and load marker.
 		"__gosx_scene3d_animation_graph_api", "__gosx_scene3d_animation_graph_loaded",
 		"__gosx_scene3d_terrain_api", // Opt-in terrain, wind and scatter-band API in the lazy terrain chunk.
+		// Opt-in counters object a host creates before the renderer loads (3a21e55ce5): the renderer adds planner and material-signature counts to it when present.
+		"__gosx_scene3d_counters",
 		// Optional glTF asset features in the glTF chunk: the second UV stream and meshopt decoding.
 		"__gosx_scene3d_asset_ext",
 		// Opt-in stadium and arena crowds (Environment.Crowds) in the lazy crowd chunk.

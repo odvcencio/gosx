@@ -3079,6 +3079,7 @@
         viewportDirty = true;
         scheduleRender("quality-transition");
       }
+      sceneFrameMeterRecord(frameOwner, now, frameStart, sceneFrameNowMS(), adaptiveQuality);
       if (finishSceneSubmission(frameOutcome, frameMeta)) {
         publishMetrics();
         publishReady();
@@ -3560,7 +3561,7 @@
       // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
       applyMotionFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedMotionFrame(sceneState, batches, sceneUpdateRigidInstanceMotion, scheduleRender, handle); },
       // applyClipFrame: the GSP4 sampled-animation channel (docs/scene3d-clip-frames.md).
-      applyClipFrame(models) { return window.__gosx_scene3d_command_bridge.applyMountedClipFrame(sceneState, models, window.__gosx_scene3d_animation_api, sceneApplyModelSkinPose, scheduleRender, handle); },
+      applyClipFrame(models) { return window.__gosx_scene3d_command_bridge.applyMountedClipFrame(sceneState, models, window.__gosx_scene3d_animation_api, sceneApplyModelSkinPose, scheduleRender, handle, sceneApplyModelLivePatch); },
       // applyInstanceStream: opt-in fast path; the bridge (instance-stream-
       // bridge.ts) lazy-loads the chunk on first use, queues an in-flight
       // frame, and reports a load failure -- never a silent drop.
@@ -3573,6 +3574,8 @@
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ getCamera() {
         return currentMountedSceneCamera();
       },
+      // getFrameStats() is the frame meter's window (frame-owner.ts): what a player's own readout shows.
+      getFrameStats() { return sceneFrameMeterStats(frameOwner, mount.__gosxScene3DRenderBackendTruth, mount.__gosxScene3DQualityState, viewport); },
       getTelemetry() {
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return {
           camera: currentMountedSceneCamera(),

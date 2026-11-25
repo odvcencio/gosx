@@ -690,6 +690,10 @@
       // parent matrix/crowd rows. Avoid recursively comparing nested imported
       // texture descriptors for every primitive on every rendered frame.
       if (object._rigidMaterialProfileStable === true) return cached.profile;
+      // A model object keeps a revision of its material inputs. Only the
+      // engine's model patch changes them (and advances it), so an equal
+      // revision needs no walk of every input, nested uniform maps included.
+      if (object._matRev >= 0 && object._matRev === cached.rev) return cached.profile;
       let same = true;
       for (let i = 0; i < sceneObjectMaterialInputKeys.length; i++) {
         const value = object[sceneObjectMaterialInputKeys[i]], prior = cached.inputs[i];
@@ -814,6 +818,7 @@
       }
       sceneObjectMaterialProfiles.set(object, {
         registryVersion: sceneMaterialProfileRegistryVersion,
+        rev: object._matRev,
         inputs: sceneObjectMaterialInputKeys.map(function(key) { return sceneCloneData(object[key]); }),
         profile,
       });

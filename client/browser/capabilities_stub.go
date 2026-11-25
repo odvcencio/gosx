@@ -32,6 +32,7 @@ type Observer struct{}
 func ObserveAttributes(Element, []string, func()) *Observer { return nil }
 func (*Observer) Dispose()                                  {}
 func HardwareConcurrency() int                              { return 0 }
+func UserAgent() string                                     { return "" }
 
 func WriteClipboardContext(_ context.Context, text string, done func(error)) {
 	WriteClipboard(text, done)

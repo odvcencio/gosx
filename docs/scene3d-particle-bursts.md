@@ -26,9 +26,21 @@ burst := scene.ParticleBurst{
 payload, err := json.Marshal(burst)
 ```
 
-Return the plan with your authenticated action or hub response. Apply any
-prerequisite scene commands before starting the effect. Delay is relative to
-receipt, so a tabletop game can align a dust burst with a piece's contact frame.
+A Go WebAssembly engine starts the burst itself:
+
+```go
+err := scene.StartParticleBurst("arena", burst) // the mount's element ID or engine ID
+```
+
+`StartParticleBurst` returns at once. It reports an invalid burst or a page
+with no Scene3D runtime; a burst the page refuses later (the target is not
+mounted, the backend has no particles) is logged to the console. It works on
+the main thread and in an engine worker.
+
+A server sends the plan instead. Return it with your authenticated action or
+hub response. Apply any prerequisite scene commands before starting the
+effect. Delay is relative to receipt, so a tabletop game can align a dust
+burst with a piece's contact frame.
 
 ```js
 const effect = await window.__gosx.scene3d.burstParticles(mount, response.burst);

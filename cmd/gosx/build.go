@@ -37,7 +37,9 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
-	GoWASMOnly        bool
+	GoWASMOnly bool
+	// GoTags are extra Go build tags for the project's build.goWASM entries only.
+	GoTags            []string
 	OutputDir         string
 	IslandsBackend    string
 	CPUProfile        string
@@ -501,7 +503,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Explicit app modules use standard Go, independently of the compiler
 	// selected below for the shared framework runtime.
-	manifest.GoWASM, err = buildGoWASMAssetsWithOptions(dir, distDir, cfg.Build.GoWASM, !opts.Dev)
+	manifest.GoWASM, err = buildGoWASMAssetsWithOptions(dir, distDir, cfg.Build.GoWASM, !opts.Dev, opts.GoTags...)
 	if err != nil {
 		return err
 	}

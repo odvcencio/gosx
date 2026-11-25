@@ -505,7 +505,7 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   const start = webgpuSource.indexOf("device.createRenderBundleEncoder({");
   assert.notEqual(start, -1, "the renderer must create a render bundle encoder");
   const body = webgpuSource.slice(start, start + 400);
-  assert.match(body, /colorFormats: \[targetFormat\]/);
+  assert.match(body, /colorFormats: \[pipeState\.targetFormat\]/);
   assert.match(body, /depthStencilFormat: "depth24plus"/);
   assert.match(body, /sampleCount: sampleCount/);
   // The PBR pipelines are keyed on the same render-target values plus the
@@ -517,14 +517,14 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   );
   assert.match(
     webgpuSource,
-    /wgpuPipelineKey\(\(detail === true \? sceneDetailVariantKey\(kind, true\) : variant \? variant\.key \+ ":" \+ kind : kind\) \+ \(uv1 \? ":uv1" \+ uv1 : ""\), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
+    /wgpuPipelineKey\(\(detail === true \? sceneDetailVariantKey\(kind, true\) : variant \? variant\.key \+ ":" \+ kind : kind\) \+ \(uv1 \? ":uv1" \+ uv1 : ""\), blendMode, depthWrite, pipeState\.targetFormat, "depth24plus", pipeState\.activeSampleCount\)/,
   );
 });
 
 test("the direct draw block is skipped only when a bundle carried the frame", () => {
   assert.match(
     webgpuSource,
-    /if \(frameStats\.bundleState === "direct" && \(hasPBRData \|\| hasInstancedData \|\| hasWorldLines \|\| hasSurfaces\)\)/,
+    /if \(telemetryState\.frameStats\.bundleState === "direct" && \(hasPBRData \|\| hasInstancedData \|\| hasWorldLines \|\| hasSurfaces\)\)/,
     "an ineligible or re-encoded frame must still reach the direct path exactly once",
   );
 });
@@ -534,8 +534,8 @@ test("the recorder and the real encoder run the same encode function", () => {
   assert.notEqual(start, -1);
   // One function drives both targets. That is what removes the blind spots: the
   // recorder cannot miss a command the encoder issues.
-  assert.match(webgpuSource, /webGPUBundleCache\.plan\(bundleLayoutKey, function\(recorder\) \{\s*\n\s*encodeBundleableSceneDraws\(recorder, bundleContext\);/);
-  assert.match(webgpuSource, /encodeBundleableSceneDraws\(bundleEncoder, bundleContext\);/);
+  assert.match(webgpuSource, /s\.webGPUBundleCache\.plan\(bundleLayoutKey, function\(recorder\) \{\s*\n\s*encodeBundleableSceneDraws\(drawState, s\.device, recorder, bundleContext\);/);
+  assert.match(webgpuSource, /encodeBundleableSceneDraws\(drawState, s\.device, bundleEncoder, bundleContext\);/);
 });
 
 test("the frame bind group is memoized, or no bundle could ever replay", () => {

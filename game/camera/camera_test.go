@@ -526,3 +526,55 @@ func TestUpdateDoesNotAllocate(t *testing.T) {
 		t.Fatalf("allocs per frame = %v", n)
 	}
 }
+
+// A SourceFunc is a valid base source and a valid source to Take. Go cannot
+// compare function values, and the director used to compare its sources, so
+// the first Update with a function base panicked.
+func TestDirectorRunsAFunctionSource(t *testing.T) {
+	basePose := Pose{Position: Vec3{0, 5, 10}, Target: Vec3{0, 1, 0}, FOV: 50}
+	baseCalls := 0
+	d := NewDirector(DirectorConfig{}, SourceFunc(func(float64) Pose { baseCalls++; return basePose }))
+	got := d.Update(1.0 / 60)
+	if baseCalls != 1 {
+		t.Fatalf("the base source ran %d times in one Update, want 1", baseCalls)
+	}
+	if got.Position != basePose.Position || d.Busy() {
+		t.Fatalf("pose %+v busy %v, want the base pose and an idle director", got, d.Busy())
+	}
+	// A function takes the camera, then hands it back.
+	takenPose := Pose{Position: Vec3{3, 2, 1}, Target: Vec3{0, 1, 0}, FOV: 40}
+	takenCalls := 0
+	d.Take(SourceFunc(func(float64) Pose { takenCalls++; return takenPose }), Blend{})
+	got = d.Update(1.0 / 60)
+	if takenCalls != 1 || baseCalls != 2 {
+		t.Fatalf("after Take: taken source ran %d times and base %d, want 1 and 2 (the base keeps running underneath)", takenCalls, baseCalls)
+	}
+	if got.Position != takenPose.Position || !d.Busy() {
+		t.Fatalf("pose %+v busy %v, want the taken pose and a busy director", got, d.Busy())
+	}
+	d.Release(Blend{})
+	got = d.Update(1.0 / 60)
+	if got.Position != basePose.Position || d.Busy() || takenCalls != 1 || baseCalls != 3 {
+		t.Fatalf("after Release: pose %+v busy %v, taken ran %d, base ran %d", got, d.Busy(), takenCalls, baseCalls)
+	}
+	// SetBase with a function cuts to it and runs it once per Update.
+	nextCalls := 0
+	d.SetBase(SourceFunc(func(float64) Pose { nextCalls++; return takenPose }))
+	if got = d.Update(1.0 / 60); nextCalls != 1 || got.Position != takenPose.Position || d.Busy() {
+		t.Fatalf("after SetBase: ran %d times, pose %+v, busy %v", nextCalls, got, d.Busy())
+	}
+}
+
+// Handing the director its own base source is not a handoff: the source runs
+// once per Update and the director stays idle.
+func TestDirectorTakingItsOwnBaseStaysOnBase(t *testing.T) {
+	follow := &Follow{Distance: 6, Pitch: 0.4}
+	follow.SetTarget(Vec3{1, 0, 2})
+	d := NewDirector(DirectorConfig{}, follow)
+	d.Update(1.0 / 60)
+	d.Take(follow, Blend{})
+	d.Update(1.0 / 60)
+	if d.Busy() {
+		t.Fatal("taking the base source left the director busy")
+	}
+}

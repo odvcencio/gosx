@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="__LANG__">
+<meta charset="utf-8">
+<meta name="viewport" content="__VIEWPORT__">
+__THEME_META__<title>__TITLE__</title>
+<style>html{background:__BACKGROUND__;color:__FOREGROUND__;font:18px system-ui,sans-serif}body{margin:5vw}</style>
+<p id="status" role="status">__STATUS__</p>
+<script id="package" type="application/octet-stream">__PACKAGE__</script>
+<script>
+// Unpacks the bundle that `gosx export --single-file` embedded above, then
+// replaces this page with the app's own index.html. The page itself can sit on
+// disk (file://) or on any HTTP path, so every lookup is relative to the
+// document, not to a server root.
+(async function unpack() {
+  const status = document.getElementById("status");
+  const fail = text => {
+    status.setAttribute("role", "alert");
+    status.textContent = text;
+  };
+  if (typeof DecompressionStream !== "function" || typeof WebAssembly !== "object") {
+    fail("This browser cannot open this file. It needs WebAssembly and DecompressionStream. Use a current Chrome, Edge, Firefox or Safari.");
+    return;
+  }
+  try {
+    const toBytes = text => Uint8Array.fromBase64
+      ? Uint8Array.fromBase64(text)
+      : Uint8Array.from(atob(text), c => c.charCodeAt(0));
+    const packed = toBytes(document.getElementById("package").textContent.trim());
+    const stream = new Blob([packed]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const {page, assets} = await new Response(stream).json();
+
+    const root = new URL("./", location.href);
+    const rootPath = decodeURIComponent(root.pathname);
+
+    // One blob URL per bundled file, created on first use. A stylesheet is
+    // rewritten before its blob exists, because a blob URL is no base for
+    // relative references: url(...) and @import inside it must already name
+    // blob URLs.
+    const blobs = new Map();
+    const building = new Set();
+    const blobOf = path => {
+      if (blobs.has(path)) return blobs.get(path);
+      const [type, encoded] = assets[path];
+      let data = toBytes(encoded);
+      if (type === "text/css") {
+        if (building.has(path)) return null; // @import cycle: leave it unrewritten
+        building.add(path);
+        data = rewriteCss(path, new TextDecoder().decode(data));
+        building.delete(path);
+      }
+      const entry = {blob: new Blob([data], {type}), url: null};
+      entry.url = URL.createObjectURL(entry.blob);
+      blobs.set(path, entry);
+      return entry;
+    };
+
+    // Which bundled file does this URL name? Only files in the document's
+    // folder count. A path outside it gets the root-absolute reading, for apps
+    // built with a fixed mount.
+    const pathIn = (url, dir) => {
+      const full = decodeURIComponent(url.pathname);
+      const path = full.startsWith(dir) ? full.slice(dir.length) : full.slice(1);
+      return Object.hasOwn(assets, path) ? path : null;
+    };
+    const pathOf = input => {
+      try {
+        const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url, root);
+        return url.protocol === root.protocol && url.host === root.host ? pathIn(url, rootPath) : null;
+      } catch {
+        return null;
+      }
+    };
+
+    // A reference inside a stylesheet is relative to the stylesheet's own path
+    // in the bundle. Query strings are dropped; a #fragment is kept.
+    const cssRef = (from, ref) => {
+      if (/^(?:#|\/\/|[a-z][a-z0-9+.-]*:)/i.test(ref)) return ref;
+      const cut = ref.search(/[?#]/);
+      const target = cut < 0 ? ref : ref.slice(0, cut);
+      const hash = cut < 0 ? "" : ref.slice(cut).replace(/^\?[^#]*/, "");
+      let path = null;
+      try {
+        path = pathIn(new URL(target, "https://bundle.invalid/" + from), "/");
+      } catch {}
+      const entry = path && blobOf(path);
+      return entry ? entry.url + hash : ref;
+    };
+    const rewriteCss = (from, text) => text
+      .replace(/url\(\s*(["']?)([^"')]+?)\1\s*\)/g, (all, q, ref) => `url(${q}${cssRef(from, ref)}${q})`)
+      .replace(/@import\s+(["'])([^"']+)\1/g, (all, q, ref) => `@import ${q}${cssRef(from, ref)}${q}`);
+
+    // Answer requests for bundled files from memory; send everything else to
+    // the real fetch. The scene loader picks its glTF parser from the request
+    // path and resolves a model's buffers and textures against that path, so
+    // models are fetched by path and never get a blob URL in the markup.
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      const path = method === "GET" ? pathOf(input) : null;
+      return path ? Promise.resolve(new Response(blobOf(path).blob)) : nativeFetch(input, init);
+    };
+
+    // Scripts that start a worker or a worklet by relative path get a URL for
+    // the bundled file instead. A worker takes a blob URL. A worklet module
+    // taken from a blob is refused on file:// pages, so it gets a data: URL.
+    // A static import or importScripts inside such a script still resolves
+    // against that URL and fails, and so does import() in a bundled script (see
+    // docs/static-game.md).
+    const bundledUrl = (url, inline) => {
+      const path = pathOf(url);
+      if (!path) return url;
+      return inline ? `data:${assets[path][0]};base64,${assets[path][1]}` : blobOf(path).url;
+    };
+    if (window.Worker) {
+      window.Worker = class extends window.Worker {
+        constructor(url, options) { super(bundledUrl(url), options); }
+      };
+    }
+    // An image the app loads later by path (a texture named in a scene
+    // command, say) gets the bundled file's blob URL too. Image loads do not
+    // go through fetch, and the markup rewrite below only sees the first page.
+    const imageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+    if (imageSrc && imageSrc.set) {
+      Object.defineProperty(HTMLImageElement.prototype, "src", {
+        configurable: true, enumerable: imageSrc.enumerable, get: imageSrc.get,
+        set(value) {
+          const path = typeof value === "string" && !/^(?:blob|data):/i.test(value) ? pathOf(value) : null;
+          imageSrc.set.call(this, path ? blobOf(path).url : value);
+        },
+      });
+    }
+    if (window.Worklet) {
+      const addModule = Worklet.prototype.addModule;
+      Worklet.prototype.addModule = function (url, options) {
+        return addModule.call(this, bundledUrl(url, true), options);
+      };
+    }
+
+    // The page names bundled files in attributes and in inline JSON. Rewrite
+    // every whole-word occurrence of a bundled path, longest first. The
+    // trailing "#name" keeps the file name visible at the end of the URL for
+    // code that looks at it.
+    const isModel = path => /\.gl(?:b|tf)$/i.test(path);
+    const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const names = Object.keys(assets).filter(path => !isModel(path))
+      .sort((a, b) => b.length - a.length).map(escape);
+    const mention = new RegExp("(^|[=,\\s\\x22'>(;])(?:\\.?/)?(" + (names.join("|") || "(?!)") + ")(?=[\\s\\x22',;&)<]|$)", "g");
+    const markup = page
+      .replace(mention, (all, before, path) => before + blobOf(path).url + "#" + path.split("/").pop())
+      // A preload hint for a model must not request a path that is not on disk.
+      .replace(/(<link\b[^>]*?\bhref=")(?:\.?\/)?([^"]+\.gl(?:b|tf))(")/gi,
+        (all, before, path, after) => Object.hasOwn(assets, path) ? before + blobOf(path).url + after : all);
+
+    document.open();
+    document.write(markup);
+    document.close();
+  } catch (error) {
+    console.error("gosx single-file bundle", error);
+    fail("Could not unpack this file: " + (error && error.message ? error.message : error));
+  }
+})();
+</script>
+</html>

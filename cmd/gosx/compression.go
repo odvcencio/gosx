@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io/fs"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/internal/httpcompress"
+	"m31labs.dev/gosx/internal/mediatype"
 )
 
 // writeTextSidecars uses the same Brotli 11 and gzip 9 writers as runtime
@@ -45,7 +45,7 @@ func writeTextSidecars(root string, policy bundlepolicy.Config) error {
 		if info.Size() < httpcompress.MinimumSize {
 			return nil
 		}
-		contentType := mime.TypeByExtension(ext)
+		contentType := mediatype.ForServing(ext)
 		if contentType == "" {
 			file, err := os.Open(path)
 			if err != nil {

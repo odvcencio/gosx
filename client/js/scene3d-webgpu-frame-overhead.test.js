@@ -4,12 +4,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createBoardWebGPUHarness, bundleBoxes, flushAsyncWork, deviceCallSnapshot, bundleMeshScene } = require("./runtime-test-harness.js");
 
-async function setup({ post = false, timing = false, optIn = false, asyncScopes = false, perf = false, mesh = false, postTail = "toneMapping" } = {}) {
+async function setup({ zeroFrameStamps = false, post = false, timing = false, optIn = false, asyncScopes = false, perf = false, mesh = false, postTail = "toneMapping", passStampsMS = null } = {}) {
   let now = 0;
   const resolves = [];
   const writes = [];
   const h = await createBoardWebGPUHarness({ fresh: true, verboseTelemetry: false,
-    performanceNow: () => now, fakeDeviceOptions: { timestampQuery: timing },
+    performanceNow: () => now, fakeDeviceOptions: { timestampQuery: timing, zeroFrameStamps, passStampsMS },
     configureDevice(device, state, env) {
       env.context.__gosx_scene3d_webgpu_pass_timing = optIn;
       if (asyncScopes) device.popErrorScope = () => Promise.resolve(null);
@@ -62,7 +62,7 @@ for (const optIn of [false, true]) test(`WebGPU per-pass query resolves require 
     await h.frame(192);
     const resolves = h.resolves.slice(before);
     assert.ok(resolves.includes(2), "adaptive quality retains frame timestamps");
-    assert.equal(resolves.includes(4), optIn);
+    assert.equal(resolves.includes(8), optIn);
   } finally { h.renderer.dispose(); }
 });
 
@@ -86,6 +86,42 @@ test("WebGPU steady frames avoid DOM writes and reuse frame stats", async () => 
   } finally { h.renderer.dispose(); }
 });
 
+test("WebGPU frame stats count the shadow passes' caster draws", async () => {
+  const h = await setup({ mesh: true });
+  try {
+    // Three boxes cast into one directional light's shadow map. The shadow passes are
+    // encoded before the frame's stats are reset, so the count must survive the reset.
+    for (const object of h.bundle.meshObjects) object.castShadow = true;
+    await h.frame(192); await h.frame(208);
+    const casters = h.mount.__gosxScene3DWebGPUStats.shadowCasterDraws;
+    assert.ok(casters >= 3, `the published frame counts its caster draws, got ${casters}`);
+    await h.frame(224);
+    assert.equal(h.mount.__gosxScene3DWebGPUStats.shadowCasterDraws, casters, "both stats buffers carry the count");
+    await h.frame(512);
+    assert.equal(Number(h.mount.getAttribute("data-gosx-scene3d-webgpu-shadow-caster-draws")), casters);
+    h.bundle.lights[0].castShadow = false;
+    await h.frame(528); await h.frame(544);
+    assert.equal(h.mount.__gosxScene3DWebGPUStats.shadowCasterDraws || 0, 0, "a frame without a shadow pass counts none");
+  } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU frame attributes report the samples and target format the frame drew with", async () => {
+  const h = await setup({ post: true });
+  try {
+    // The renderer-state attributes are written before the first frame chooses its samples and target.
+    h.bundle.msaaSamples = 4;
+    for (let t = 512; t <= 576; t += 16) await h.frame(t);
+    await h.frame(1024);
+    assert.equal(h.mount.__gosxScene3DWebGPUStats.sampleCount, 4);
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "4");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-target-format"), "rgba16float", "post processing draws into a float target");
+    h.bundle.msaaSamples = 1; h.bundle.postEffects = [];
+    for (let t = 1040; t <= 1104; t += 16) await h.frame(t);
+    await h.frame(1536);
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-sample-count"), "1");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-target-format"), h.configureCalls.at(-1).format, "without post processing the frame draws into the canvas format");
+  } finally { h.renderer.dispose(); }
+});
 
 test("WebGPU scaled and unknown trailing effects retain the present blit", async () => {
   const h = await setup({ post: true });
@@ -199,7 +235,91 @@ test("gosx perf collects a GPU frame sample for every measured frame and opts in
     assert.equal(frames.length, 60);
     assert.equal(new Set(frames.map(e => e.detail.frameSeq)).size, 60);
     assert.equal(passes.length, 60, "delayed pass ring still yields one sample per steady frame");
-    assert.ok(h.resolves.slice(resolves).includes(4));
+    assert.ok(h.resolves.slice(resolves).includes(8), "eight pass stamps: shadow, main, the frame-end marker and skinning");
     assert.ok(h.writes.filter(([name]) => name.endsWith("webgpu-gpu-ms")).length < 10);
   } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU frame timer that writes zero stamps falls back to the render-pass span", async () => {
+  const h = await setup({ timing: true, zeroFrameStamps: true });
+  try {
+    for (let i = 0; i < 6; i++) await h.frame(192 + i * 16);
+    const status = h.renderer.getPerformanceTimingStatus();
+    assert.equal(status.source, "gpu-pass-timestamp");
+    assert.equal(status.available, true);
+    let sample = null;
+    for (let i = 0; i < 6 && !sample; i++) { await h.frame(300 + i * 16); sample = h.renderer.pollPerformanceSample(); }
+    assert.ok(sample, "the pass span arrives as the performance sample");
+    assert.equal(sample.source, "gpu-pass-timestamp");
+    assert.equal(sample.gpuMS, 4, "shadow begin to main end in the fake ramp");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "pass-span");
+    const before = h.fake.state.computePasses.length;
+    await h.frame(600);
+    const labels = h.fake.state.computePasses.slice(before).map(p => p.descriptor && p.descriptor.label);
+    assert.ok(!labels.includes("gosx-frame-timer-start"), "an unusable frame timer stops stamping");
+  } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU frame timer with real stamps keeps the frame scope", async () => {
+  const h = await setup({ timing: true });
+  try {
+    await h.frame(192);
+    assert.equal(h.renderer.getPerformanceTimingStatus().source, "gpu-timestamp");
+  } finally { h.renderer.dispose(); }
+});
+
+test("WebGPU pass timing ends the frame with a marker that loads the presented image", async () => {
+  const h = await setup({ timing: true, zeroFrameStamps: true, post: true });
+  try {
+    let sample = null;
+    for (let i = 0; i < 12 && !(sample && sample.source === "gpu-pass-timestamp"); i++) { await h.frame(300 + i * 16); sample = h.renderer.pollPerformanceSample(); }
+    assert.ok(sample, "a pass sample arrives");
+    assert.equal(sample.gpuMS, 5, "the governor reads the frame span: shadow begin to the marker's end");
+    assert.equal(sample.scope, "frame-end-marker");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-frame-ms"), "5.000");
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-tail-ms"), "1.000", "main end to marker end");
+    const before = h.fake.state.renderPasses.length;
+    await h.frame(700);
+    const passes = h.fake.state.renderPasses.slice(before);
+    const marker = passes.at(-1).descriptor;
+    assert.equal(marker.label, "gosx-frame-end-marker", "the marker is the frame's last render pass");
+    assert.equal(marker.colorAttachments[0].loadOp, "load", "it keeps the presented image");
+    assert.equal(marker.colorAttachments[0].storeOp, "store");
+    const post = passes.filter(p => p.descriptor && p.descriptor.label !== "gosx-frame-end-marker").at(-1).descriptor;
+    assert.equal(marker.colorAttachments[0].view, post.colorAttachments[0].view, "it loads the view post-processing wrote last");
+  } finally { h.renderer.dispose(); }
+});
+
+test("On a tile GPU the governor sheds quality for a GPU-bound post chain and keeps it for CPU-bound frames", async () => {
+  const { createAdaptiveQualityHarness } = require("./runtime-test-harness.js");
+  async function samplesFrom(passStampsMS, frameGapMS) {
+    const h = await setup({ timing: true, zeroFrameStamps: true, post: true, passStampsMS });
+    try {
+      const out = [];
+      for (let i = 0; i < 40 && out.length < 6; i++) {
+        await h.frame(300 + i * frameGapMS);
+        const s = h.renderer.pollPerformanceSample();
+        if (s && s.source === "gpu-pass-timestamp") out.push(s);
+      }
+      return out;
+    } finally { h.renderer.dispose(); }
+  }
+  // GPU-bound in post: shadows and the main pass end at 6 ms (the scene span
+  // alone would keep quality), post runs to 30 ms.
+  const gpuBound = await samplesFrom([0, 1, 1.5, 6, 2, 30], 16);
+  // CPU-bound: the GPU frame takes 5 ms while the page draws every 40 ms.
+  const cpuBound = await samplesFrom([0, 1, 1.5, 4, 4.5, 5], 40);
+  assert.ok(gpuBound.length > 0 && gpuBound.every(s => s.gpuMS === 30 && s.scope === "frame-end-marker"), "the frame span reaches the governor, though the marker began before the main pass ended");
+  assert.ok(cpuBound.length > 0 && cpuBound.every(s => s.gpuMS === 5), "GPU time, not the page's frame interval");
+  for (const [samples, sheds, label, cpuMS, gapMS] of [[gpuBound, true, "GPU-bound frames shed quality", 3, 16], [cpuBound, false, "CPU-bound frames keep quality", 30, 34]]) {
+    const q = createAdaptiveQualityHarness({ qualityTier: "full", adaptiveBudget: "gpu" });
+    const initial = q.state.activeTier;
+    for (let i = 0; i < 40; i++) {
+      q.clock.now += gapMS;
+      const s = samples[i % samples.length];
+      q.renderer.sample = { source: s.source, gpuMS: s.gpuMS, atMS: q.clock.now };
+      q.api.sceneUpdateAdaptiveQuality(q.state, q.mount, q.sceneState, {}, q.clock.now - cpuMS, q.clock.now, q.renderer);
+    }
+    assert.equal(q.state.activeTier !== initial, sheds, label);
+  }
 });

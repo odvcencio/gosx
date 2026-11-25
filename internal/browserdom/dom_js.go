@@ -504,6 +504,27 @@ func (e Element) SetOpen(value bool) {
 	}
 }
 
+// ShowModal opens a dialog element as a modal dialog: the browser draws its
+// backdrop, keeps focus inside it and closes it on Escape. It does nothing on an
+// element that is not a dialog, and on a dialog that is already open (the
+// browser would throw). The browser moves focus into the dialog before ShowModal
+// returns; Go focus listeners run after that, and before ShowModal returns (see
+// Listener).
+func (e Element) ShowModal() {
+	if e.Valid() && e.value.Get("showModal").Type() == js.TypeFunction && !e.value.Get("open").Truthy() {
+		jsutil.Call(e.value, "showModal")
+	}
+}
+
+// CloseDialog closes an open dialog element. The browser queues the dialog's
+// close event, so close listeners run after CloseDialog has returned. It does
+// nothing on an element that is not a dialog, and on a closed dialog.
+func (e Element) CloseDialog() {
+	if e.Valid() && e.value.Get("close").Type() == js.TypeFunction && e.value.Get("open").Truthy() {
+		jsutil.Call(e.value, "close")
+	}
+}
+
 // Focus focuses the element. The browser runs the focus and focusin listeners
 // before Focus returns. Go listeners run after the browser has delivered the
 // events, and before Focus returns (see Listener).

@@ -58,10 +58,10 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.match(webgpu, /stepMode: "instance"[\s\S]*shaderLocation: 4[\s\S]*shaderLocation: 7/);
   assert.match(webgpu, /shaderLocation: 8/);
   assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
-  assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials/);
+  assert.match(webgpu, /function drawInstancedMeshes\(drawState\s*, device\s*, pass\s*, meshList\s*, materials/);
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
   assert.match(webgpu, /function getShadowInstancedPipeline/);
-  assert.match(webgpu, /webGPUFrameMaterialGroup\(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup\)/);
+  assert.match(webgpu, /webGPUFrameMaterialGroup\(drawState\.uniformState\.materialFrame, matIndex, mat, receiveShadow,[\s\S]*createMaterialBindGroup\(drawState\.uniformState, drawState\.gpuRes, drawState\.meshState, device/);
   assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
   assert.doesNotMatch(mount, /instanced-meshes/);
 });
@@ -77,8 +77,8 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.match(webgpu, /bindPBRPipeline\(reflectedDirect, mat\)/);
-  assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -activeSampleCount : activeSampleCount\)/);
-  assert.match(webgpu, /getPBRPipeline\(blendMode, objectDepthWrite, reflected \? "cw" : "ccw", variant, uv1\)/);
+  assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -pipeState\.activeSampleCount : pipeState\.activeSampleCount\)/);
+  assert.match(webgpu, /getPBRPipeline\(drawState\.pipeState, device, blendMode, objectDepthWrite, reflected \? "cw" : "ccw", variant, uv1\)/);
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
@@ -105,14 +105,14 @@ test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
   assert.match(webgpu, /primitive: \{ topology: topology \}/);
   assert.match(webgpu, /function wgpuCreateSurfacePipeline/);
   assert.match(webgpu, /function wgpuCreateThickLinePipeline/);
-  assert.match(webgpu, /function drawWorldLineEntries\(renderPass, entries, passName, frameBindGroup\)/);
-  assert.match(webgpu, /function drawThickWorldLineEntries\(renderPass, record, passName, frameBindGroup\)/);
-  assert.match(webgpu, /function drawScreenLines\(renderPass, bundle, frameBindGroup\)/);
-  assert.match(webgpu, /function drawSurfaceEntries\(renderPass, bundle, materials, passName, frameBindGroup\)/);
-  assert.match(webgpu, /buildSceneWorldDrawPlan\(bundle, worldDrawScratch\)/);
+  assert.match(webgpu, /function drawWorldLineEntries\(drawState\s*, device\s*, renderPass, entries, passName, frameBindGroup\)/);
+  assert.match(webgpu, /function drawThickWorldLineEntries\(drawState\s*, device\s*, renderPass, record, passName, frameBindGroup\)/);
+  assert.match(webgpu, /function drawScreenLines\(drawState\s*, device\s*, renderPass, bundle, frameBindGroup\)/);
+  assert.match(webgpu, /function drawSurfaceEntries\(drawState\s*, device\s*, renderPass, bundle, materials, passName, frameBindGroup\)/);
+  assert.match(webgpu, /buildSceneWorldDrawPlan\(bundle, drawState\.worldDrawScratch\)/);
   assert.match(webgpu, /expandSceneThickLineIntoScratch\(/);
   assert.match(webgpu, /setIndexBuffer\(indexBuffer, "uint16"\)/);
-  assert.match(webgpu, /getSceneColorPipeline\(entry\.space === "clip" \? "clip" : "world", topology, blend, depthWrite\)/);
+  assert.match(webgpu, /getSceneColorPipeline\(drawState\.pipeState, drawState\.gpuRes, device, entry\.space === "clip" \? "clip" : "world", topology, blend, depthWrite\)/);
   assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.surfaces\)[\s\S]{0,120}return false/);
   assert.doesNotMatch(webgpu, /Array\.isArray\(bundle && bundle\.lines\)[\s\S]{0,120}return false/);
   assert.doesNotMatch(mount, /sceneNumber\(entry\.lineWidth/);
@@ -128,14 +128,14 @@ test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.ts"), "utf8");
 
   assert.match(webgpu, /function createSceneWebGPURenderer\(canvas, options\)/);
-  assert.match(webgpu, /function ensureMSAAColor\(width, height, sampleCount\)/);
+  assert.match(webgpu, /function ensureMSAAColor\(pipeState\s*, device\s*, targetFormat\s*, width\s*, height\s*, sampleCount\s*\)/);
   assert.match(webgpu, /sampleCount: sampleCount/);
   assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(sampleCount \|\| 1\)\) \}/);
   assert.match(webgpu, /activeSampleCount = sampleCount/);
   assert.match(webgpu, /mainColorAttachment\.resolveTarget = mainResolveView/);
-  assert.match(webgpu, /function sceneWebGPUCanvasConfiguration\(\)/);
-  assert.match(webgpu, /colorSpace: activePresentation\.colorSpace/);
-  assert.match(webgpu, /config\.toneMapping = \{ mode: activePresentation\.toneMappingMode \}/);
+  assert.match(webgpu, /function sceneWebGPUCanvasConfiguration\(telemetryState\s*\)/);
+  assert.match(webgpu, /colorSpace: telemetryState\.activePresentation\.colorSpace/);
+  assert.match(webgpu, /config\.toneMapping = \{ mode: telemetryState\.activePresentation\.toneMappingMode \}/);
   assert.match(mount, /function sceneWebGPUOptions\(props, capability\)/);
   assert.match(mount, /msaaSamples: requestedSamples > 1 \? 4 : \(antialias \? 4 : 1\)/);
   assert.match(mount, /powerPreference: sceneWebGPUPowerPreference/);

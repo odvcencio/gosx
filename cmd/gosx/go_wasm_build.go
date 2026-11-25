@@ -36,7 +36,7 @@ func buildGoWASMAssets(projectDir, distDir string, entries map[string]string) (m
 	return buildGoWASMAssetsWithOptions(projectDir, distDir, entries, false)
 }
 
-func buildGoWASMAssetsWithOptions(projectDir, distDir string, entries map[string]string, production bool) (map[string]HashedAsset, error) {
+func buildGoWASMAssetsWithOptions(projectDir, distDir string, entries map[string]string, production bool, tags ...string) (map[string]HashedAsset, error) {
 	if err := validateGoWASMEntries(entries); err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func buildGoWASMAssetsWithOptions(projectDir, distDir string, entries map[string
 	assets := make(map[string]HashedAsset, len(entries))
 	for _, name := range names {
 		target := filepath.Join(tempDir, name+".wasm")
-		cmd := exec.Command("go", goWASMModuleBuildArgs(target, entries[name], production)...)
+		cmd := exec.Command("go", goWASMModuleBuildArgs(target, entries[name], production, tags...)...)
 		cmd.Dir, cmd.Env = root, env
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("build.goWASM %q: %w: %s", name, err, strings.TrimSpace(string(output)))
@@ -118,7 +118,11 @@ func buildGoWASMAssetsWithOptions(projectDir, distDir string, entries map[string
 			return nil, fmt.Errorf("build.goWASM %q assets: %w", name, err)
 		}
 		assets[name] = asset
-		fmt.Printf("    Go WASM: %s → %s (%d bytes)\n", name, asset.File, asset.Size)
+		if len(tags) > 0 {
+			fmt.Printf("    Go WASM: %s → %s (%d bytes, tags: %s)\n", name, asset.File, asset.Size, strings.Join(tags, ","))
+		} else {
+			fmt.Printf("    Go WASM: %s → %s (%d bytes)\n", name, asset.File, asset.Size)
+		}
 	}
 	return assets, nil
 }
@@ -141,10 +145,15 @@ func readProjectStandardGoWASMExec(projectDir string) ([]byte, error) {
 	return readGoWASMExec(strings.TrimSpace(string(output)))
 }
 
-func goWASMModuleBuildArgs(output, pkg string, production bool) []string {
+// goWASMModuleBuildArgs lists the go build arguments for one entry module.
+// Extra tags (already validated) add one -tags flag; none leaves the list as it was.
+func goWASMModuleBuildArgs(output, pkg string, production bool, tags ...string) []string {
 	args := []string{"build", "-trimpath"}
 	if production {
 		args = append(args, "-ldflags=-s -w")
+	}
+	if len(tags) > 0 {
+		args = append(args, "-tags="+strings.Join(tags, ","))
 	}
 	return append(args, "-o", output, pkg)
 }
@@ -201,4 +210,24 @@ func runGoWASMOnlyBuild(projectDir string, opts BuildOptions) error {
 	}
 	fmt.Printf("  Go WASM manifest: %s\n", manifestPath)
 	return nil
+}
+
+// parseGoTags splits a --go-tags value and checks each tag: letters, digits
+// and underscore only, no empty entries.
+func parseGoTags(value string) ([]string, error) {
+	if value == "" {
+		return nil, fmt.Errorf("--go-tags needs tags: --go-tags=a,b")
+	}
+	tags := strings.Split(value, ",")
+	for _, tag := range tags {
+		if tag == "" {
+			return nil, fmt.Errorf("--go-tags %q has an empty tag", value)
+		}
+		for _, r := range tag {
+			if r != '_' && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+				return nil, fmt.Errorf("--go-tags: tag %q may hold only letters, digits and underscore", tag)
+			}
+		}
+	}
+	return tags, nil
 }

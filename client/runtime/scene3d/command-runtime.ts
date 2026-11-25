@@ -771,11 +771,14 @@
 
   var CLIP_FRAME_RESULTS = [{ applied: true, binary: true, pending: false }, { applied: true, binary: true, pending: true }];
 
-  function applyMountedClipFrame(state: any, models: any, animationApi: any, applyPose: any, scheduleRender: any, handle: any) {
+  // patchModel, when the mount passes it, is the mount's live transform patch
+  // (state, record, {x, y, z, rotationY}). The animation graph chunk uses it
+  // to move a model to the root a frame carries.
+  function applyMountedClipFrame(state: any, models: any, animationApi: any, applyPose: any, scheduleRender: any, handle: any, patchModel?: any) {
     var stats = handle.__gosxClipFrameStats || (handle.__gosxClipFrameStats = { accepted: 0, errors: 0, lastError: "", rejected: Object.create(null) });
     // The animation chunk loads with the first skinned model. Without it no
     // model can be sampled yet, which is the same as a renderer that is not ready.
-    var result = animationApi && animationApi.applyClipFrame ? animationApi.applyClipFrame(state, models, applyPose) : { applied: false, reason: "renderer-not-ready" };
+    var result = animationApi && animationApi.applyClipFrame ? animationApi.applyClipFrame(state, models, applyPose, patchModel) : { applied: false, reason: "renderer-not-ready" };
     if (!result || result.applied !== true) {
       var reason = String(result && result.reason || "invalid-frame");
       stats.rejected[reason] = (stats.rejected[reason] || 0) + 1;

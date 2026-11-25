@@ -206,3 +206,38 @@ func TestCanonicalIRMeshNodeCarriesClipSampled(t *testing.T) {
 		t.Fatalf("default json must omit both flags: %s", raw)
 	}
 }
+
+func TestModelMorphWeightsLowerToWire(t *testing.T) {
+	props := Props{Graph: NewGraph(
+		Model{ID: "lineman", Src: "/m/player.glb", Scale: Vec3(1, 1, 1),
+			MorphWeights: map[string]float64{"mass": 0.8, "belly": 0.25, "bad": math.NaN()}},
+		Model{ID: "back", Src: "/m/player.glb", Scale: Vec3(1, 1, 1)},
+	)}
+	ir := props.SceneIR()
+	want := map[string]float64{"mass": 0.8, "belly": 0.25}
+	if got := ir.Models[0].MorphWeights; len(got) != 2 || got["mass"] != 0.8 || got["belly"] != 0.25 {
+		t.Fatalf("lineman weights = %v, want %v", got, want)
+	}
+	raw, err := json.Marshal(ir.Models[0])
+	if err != nil || !strings.Contains(string(raw), `"morphWeights":{"belly":0.25,"mass":0.8}`) {
+		t.Fatalf("model json = %s, err %v", raw, err)
+	}
+	raw, _ = json.Marshal(ir.Models[1])
+	if strings.Contains(string(raw), "morphWeights") {
+		t.Fatalf("model without weights must omit morphWeights: %s", raw)
+	}
+	var mesh *IRMeshNode
+	for _, node := range props.CanonicalIR().Nodes {
+		if node.Mesh != nil && node.ID == "lineman" {
+			mesh = node.Mesh
+		}
+	}
+	if mesh == nil || mesh.MorphWeights["mass"] != 0.8 || len(mesh.MorphWeights) != 2 {
+		t.Fatalf("canonical mesh = %+v", mesh)
+	}
+	// The legacy record map carries the same field.
+	models, _ := props.LegacyProps()["scene"].(map[string]any)["models"].([]map[string]any)
+	if len(models) == 0 || models[0]["morphWeights"] == nil {
+		t.Fatalf("legacy model record lacks morphWeights: %v", models)
+	}
+}

@@ -36,7 +36,7 @@ function sceneWebGLSelenaSurfaceFragment(source: string, material: any) {
   const hook = defines + sceneWebGLSelenaSurfaceHook(material) + "\n";
   const out = source.replace("void main() {", function() { return hook + "void main() {"; })
     .replace(/[ \t]*vec3 albedo ?= ?u_albedo;[\s\S]*?(?=[ \t]*if \(u_unlit\) \{)/, `    SelenaSurface gosxS = selenaSurface(SelenaSurfaceGeo(v_worldPosition, normalize(v_normal), v_uv, v_tangent, v_bitangent, normalize(u_cameraPosition - v_worldPosition), v_instanceColor));
-    vec3 albedo = gosxS.baseColor * v_instanceColor.rgb;
+    vec3 albedo = gosxS.baseColor${hook.indexOf("selenaGeo.color") < 0 ? " * v_instanceColor.rgb" : ""};
     float roughness = clamp(gosxS.roughness, 0.04, 1.0);
     roughness = clamp(roughness * (1.0 - abs(u_anisotropy) * 0.28), 0.04, 1.0);
     roughness = gsxSpecularRoughness(normalize(v_normal), roughness, u_specularAA);
@@ -73,14 +73,14 @@ function sceneWebGLSelenaSurfaceTextures(material: any) {
   material._gosxSurfaceTextures = list;
 }
 
-function sceneWebGLCreateSelenaSurfaceProgram(gl: WebGL2RenderingContext, material: any, skinned: boolean) {
+function sceneWebGLCreateSelenaSurfaceProgram(gl: WebGL2RenderingContext, material: any, skinned: boolean | "instanced") {
   const fragment = scenePBRFragmentSourceForContext(gl, sceneWebGLSelenaSurfaceFragment(SCENE_PBR_FRAGMENT_SOURCE, material));
-  const vertex = skinned ? SCENE_PBR_SKINNED_VERTEX_SOURCE : SCENE_PBR_VERTEX_SOURCE;
+  const inst = skinned === "instanced", vertex = inst ? SCENE_PBR_INSTANCED_VERTEX_SOURCE : skinned ? SCENE_PBR_SKINNED_VERTEX_SOURCE : SCENE_PBR_VERTEX_SOURCE;
   const fields = material.shaderLayout.uniformBlock && Array.isArray(material.shaderLayout.uniformBlock.fields) ? material.shaderLayout.uniformBlock.fields : [];
   const prefix = String(material.shaderLayout.surface.glUniformPrefix || "");
   return scenePBRCreateProgramInfo(gl, vertex, fragment, skinned ? "Selena surface shader (skinned)" : "Selena surface shader", function(program: any) {
-    const uniforms = scenePBRCacheBaseUniforms(gl, program);
-    if (skinned) {
+    const base = inst ? scenePBRFinalizeInstancedProgram(gl, { program: program }, false) : null, uniforms = base ? base.uniforms : scenePBRCacheBaseUniforms(gl, program);
+    if (skinned && !inst) {
       uniforms.modelMatrix = gl.getUniformLocation(program, "u_modelMatrix");
       uniforms.hasSkin = gl.getUniformLocation(program, "u_hasSkin");
       uniforms.jointMatrices = gl.getUniformLocation(program, "u_jointMatrices[0]");
@@ -90,24 +90,24 @@ function sceneWebGLCreateSelenaSurfaceProgram(gl: WebGL2RenderingContext, materi
       const location = field && typeof field.name === "string" ? gl.getUniformLocation(program, prefix + field.name) : null;
       if (location) params.push({ field: field, location: location });
     }
-    return { attributes: scenePBRAttributeLocations(gl, program, skinned ? "position normal uv tangent joints weights" : "position normal uv tangent"), uniforms: uniforms, surface: params };
+    return { attributes: base ? base.attributes : scenePBRAttributeLocations(gl, program, skinned ? "position normal uv tangent joints weights" : "position normal uv tangent"), uniforms: uniforms, surface: params };
   });
 }
 
 // sceneWebGLSelenaSurfaceProgram returns the linked surface program for material,
 // false while it is still compiling, or null when material is not a surface
 // material or its program failed (the caller then draws the standard path).
-function sceneWebGLSelenaSurfaceProgram(gl: WebGL2RenderingContext, cache: Map<string, any>, material: any, skinned: boolean) {
+function sceneWebGLSelenaSurfaceProgram(gl: WebGL2RenderingContext, cache: Map<string, any>, material: any, skinned: boolean | "instanced") {
   const hook = sceneWebGLSelenaSurfaceHook(material);
   if (!hook) return null;
   // Per-draw lookups reuse the material's last answer instead of rebuilding
   // the cache key, which would copy the hook source every frame.
-  const slot = skinned ? "_gosxGLSurfaceSkinned" : "_gosxGLSurfaceStatic";
+  const slot = skinned === "instanced" ? "_gosxGLSurfaceInstanced" : skinned ? "_gosxGLSurfaceSkinned" : "_gosxGLSurfaceStatic";
   const memo = material[slot];
   let record = memo && memo.hook === material.customFragment && memo.cache === cache ? memo.record : null;
   if (!record) {
     sceneWebGLSelenaSurfaceTextures(material);
-    const key = (skinned ? "skinned\n" : "static\n") + JSON.stringify(material.shaderLayout.surface) + "\n" + hook;
+    const key = (skinned === "instanced" ? "instanced\n" : skinned ? "skinned\n" : "static\n") + JSON.stringify(material.shaderLayout.surface) + "\n" + hook;
     record = cache.get(key);
     if (!record) {
       const info = sceneWebGLCreateSelenaSurfaceProgram(gl, material, skinned);

@@ -96,6 +96,9 @@ type lodState struct {
 	accum      float64
 	pixels     float64
 	fade       float64
+	// hold is true in a frame where the schedule skips this character's
+	// pose. Dispatch then sends its root placement alone.
+	hold bool
 }
 
 func newLODState(layers int) lodState {
@@ -152,6 +155,11 @@ func projectedPixels(cam LODCamera, pos [3]float64, height float64) float64 {
 // updates this frame, in input order. The slice is reused by the next call.
 // Call it once per rendered frame after stepping the instances, then pass
 // the result to Dispatch. Instances not returned keep their last pose.
+//
+// For characters placed with Instance.SetRoot, pass every instance to
+// Dispatch instead of the returned slice: the ones not returned then send
+// their placement alone, so they keep moving every frame while their pose
+// updates at the reduced rate.
 func (s *LODScheduler) Update(dt float64, cam LODCamera, chars []LODTarget) []*Instance {
 	levels := s.Levels
 	if len(levels) == 0 {
@@ -235,6 +243,7 @@ func (s *LODScheduler) Update(dt float64, cam LODCamera, chars []LODTarget) []*I
 			continue
 		}
 		st := &in.lod
+		st.hold = false
 		if st.period <= 0 {
 			s.due = append(s.due, in)
 			continue
@@ -245,7 +254,9 @@ func (s *LODScheduler) Update(dt float64, cam LODCamera, chars []LODTarget) []*I
 		if st.accum >= 1 {
 			st.accum -= math.Floor(st.accum)
 			s.due = append(s.due, in)
+			continue
 		}
+		st.hold = true
 	}
 	return s.due
 }

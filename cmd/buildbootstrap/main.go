@@ -45,11 +45,13 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -218,6 +220,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
 			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-helpers.ts"),
+			sourceFile("../runtime/scene3d/webgpu-water.ts"),
+			sourceFile("../runtime/scene3d/webgpu-passes.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -251,6 +256,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
 			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
+			sourceFile("../runtime/scene3d/model-looks.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
@@ -568,6 +574,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-backend.ts"),
 			sourceFile("../runtime/scene3d/model-pose-data.ts"),
 			sourceFile("../runtime/scene3d/mount-webgl.ts"),
+			sourceFile("../runtime/scene3d/model-looks.ts"),
 			sourceFile("../runtime/scene3d/mount-quality.ts"),
 			sourceFile("../runtime/scene3d/overlays.ts"),
 			sourceFile("../runtime/scene3d/mount-viewport.ts"),
@@ -679,6 +686,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu-cutaway.ts"),
 			sourceFile("../runtime/scene3d/webgpu-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-helpers.ts"),
+			sourceFile("../runtime/scene3d/webgpu-water.ts"),
+			sourceFile("../runtime/scene3d/webgpu-passes.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -1141,6 +1151,11 @@ func writeCompressedSidecars(filePath, code string) error {
 	}
 	for _, sc := range sidecars {
 		if sc.bytes != nil {
+			// Keep a sidecar that already serves this bundle, so a build on
+			// another CPU does not rewrite committed bytes (sidecarServes).
+			if current, readErr := os.ReadFile(sc.path); readErr == nil && sidecarServes(sc.path, current, sc.bytes, []byte(code)) {
+				continue
+			}
 			if err := os.WriteFile(sc.path, sc.bytes, 0o644); err != nil {
 				return err
 			}
@@ -1169,11 +1184,51 @@ func sidecarsMatch(filePath, code string) (bool, error) {
 			}
 			continue
 		}
-		if !exists || !bytes.Equal(current, sc.bytes) {
+		if !exists || !sidecarServes(sc.path, current, sc.bytes, []byte(code)) {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// sidecarServes reports whether current, the sidecar on disk, serves code as
+// well as fresh, the bytes this machine's compressor just made. The same bytes
+// serve. So does a sidecar that decodes to exactly code and is at most 0.1%
+// plus 64 bytes larger than fresh. Brotli and zopfli choose their blocks from
+// floating-point costs, and the Go compiler fuses a multiply and an add into
+// one instruction on arm64 and amd64 v3 but not on amd64 v1, so one compressor
+// version writes sidecars a few bytes apart on different CPUs: bootstrap.js.br
+// at 380ccf0a7 is 502,861 bytes from amd64 v1 and 502,858 from arm64 or
+// amd64 v3. Both are correct encoded replies. Asking for one CPU's bytes made
+// --check fail on every other.
+func sidecarServes(path string, current, fresh, code []byte) bool {
+	if bytes.Equal(current, fresh) {
+		return true
+	}
+	if len(current) > len(fresh)+len(fresh)/1000+64 {
+		return false
+	}
+	decoded, err := decodeSidecar(path, current, len(code))
+	return err == nil && bytes.Equal(decoded, code)
+}
+
+// decodeSidecar decompresses a .gz or .br sidecar, reading at most one byte
+// more than limit, which is enough to tell a longer payload from code.
+func decodeSidecar(path string, data []byte, limit int) ([]byte, error) {
+	var r io.Reader
+	switch {
+	case strings.HasSuffix(path, ".gz"):
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		r = zr
+	case strings.HasSuffix(path, ".br"):
+		r = brotli.NewReader(bytes.NewReader(data))
+	default:
+		return nil, fmt.Errorf("decode %s: not a .gz or .br sidecar", path)
+	}
+	return io.ReadAll(io.LimitReader(r, int64(limit)+1))
 }
 
 type builtBundle struct {
@@ -1465,6 +1520,9 @@ func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	}
 	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
 		options.MangleProps = webGLPrivatePropertyPattern
+		options.MangleQuoted = esbuild.MangleQuotedTrue
+	} else if entry.name == "bootstrap-feature-scene3d-webgpu.js" {
+		options.MangleProps = webGPUPrivatePropertyPattern
 		options.MangleQuoted = esbuild.MangleQuotedTrue
 	}
 	result := esbuild.Transform(input, options)

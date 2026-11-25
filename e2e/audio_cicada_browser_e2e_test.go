@@ -14,8 +14,8 @@ import (
 
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"m31labs.dev/gosx/browsertest"
 	"m31labs.dev/gosx/game/audio/worklet"
-	"m31labs.dev/gosx/internal/chrometest"
 )
 
 // cicadaPageHTML drives the real mixer (the bootstrap's window.__gosx.audioMixer),
@@ -195,7 +195,7 @@ func TestCicadaKernelAndMixerInRealBrowser(t *testing.T) {
 		url = e2eExposeToWindows(t, server.URL)
 	}
 
-	browser, err := chrometest.Start(t.Context(), e2eChromePath(t), "--no-sandbox", "--autoplay-policy=no-user-gesture-required")
+	browser, err := browsertest.Start(t.Context(), e2eChromePath(t), "--no-sandbox", "--autoplay-policy=no-user-gesture-required")
 	if err != nil {
 		if browserUnavailable(err) {
 			skipOrFailChrome(t, chromeRequired(), "chrome could not start: %v", err)

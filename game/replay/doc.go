@@ -5,6 +5,9 @@
 // keyframe snapshot of the simulation. A Player seeks to any tick by restoring
 // the nearest earlier keyframe and re-simulating the inputs forward. Seeking
 // backward is the same operation, so reverse playback needs no extra state.
+// A Tape is the transport for a game with a fixed step: a cursor over one
+// stretch of frames that the game's own tick plays, holds, seeks and steps
+// between marks, while the game seeks its Player to the frame on screen.
 //
 // The simulation must be deterministic: its state after tick N must depend
 // only on its snapshot at an earlier tick and the inputs since. Anything that
