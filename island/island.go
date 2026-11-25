@@ -2462,6 +2462,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		// Terrain and crowds ship as runtime feature chunks (build.json runtime.features).
 		{"terrain", r.requiredFeaturePath("scene3d-terrain"), r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsTerrain)},
 		{"crowd", r.requiredFeaturePath("scene3d-crowd"), r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsCrowds)},
+		{"smaa", r.requiredFeaturePath("scene3d-smaa"), r.scene3DNeedsChunk((*sceneprobe.Probe).NeedsSMAA)},
 		{"compute", r.bootstrapFeatureScene3dComputePath, needsCompute},
 		{"decompress", r.bootstrapFeatureScene3dDecompressPath, needsDecompress},
 	} {

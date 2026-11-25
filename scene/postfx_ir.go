@@ -40,6 +40,7 @@ const (
 	PostEffectKindDOF            = "dof"
 	PostEffectKindFXAA           = "fxaa"
 	PostEffectKindTAA            = "taa"
+	PostEffectKindSMAA           = "smaa"
 	PostEffectKindCustomPost     = "customPost"
 	PostEffectKindGodRays        = "godRays"
 	PostEffectKindGrain          = "grain"
@@ -66,6 +67,7 @@ var postEffectIRDecoders = map[string]func([]byte) (PostEffectIR, error){
 	PostEffectKindDOF:            decodePostEffectIRAs[DOFIR],
 	PostEffectKindFXAA:           decodePostEffectIRAs[FXAAIR],
 	PostEffectKindTAA:            decodePostEffectIRAs[TAAIR],
+	PostEffectKindSMAA:           decodePostEffectIRAs[SMAAIR],
 	PostEffectKindCustomPost:     decodePostEffectIRAs[CustomPostIR],
 	PostEffectKindGodRays:        decodePostEffectIRAs[GodRaysIR],
 	PostEffectKindGrain:          decodePostEffectIRAs[GrainIR],
@@ -530,6 +532,37 @@ func (ir TAAIR) legacyProps() map[string]any {
 }
 func (ir TAAIR) MarshalJSON() ([]byte, error) { return json.Marshal(ir.legacyProps()) }
 
+// SMAAIR lowers SMAA into the bundle.postEffects[i] shape:
+//
+//	{kind: "smaa", threshold, maxSearchSteps, cornerRounding}
+//
+// Lowering fills the defaults and clamps each field to its documented range,
+// so the runtime reads the values as they are.
+type SMAAIR struct {
+	Threshold      float64 `json:"threshold"`
+	MaxSearchSteps int     `json:"maxSearchSteps"`
+	CornerRounding float64 `json:"cornerRounding"`
+}
+
+func (ir SMAAIR) legacyProps() map[string]any {
+	return map[string]any{"kind": PostEffectKindSMAA, "threshold": ir.Threshold, "maxSearchSteps": ir.MaxSearchSteps, "cornerRounding": ir.CornerRounding}
+}
+func (ir SMAAIR) MarshalJSON() ([]byte, error) { return json.Marshal(ir.legacyProps()) }
+
+func (s SMAA) lower() SMAAIR {
+	ir := SMAAIR{Threshold: 0.1, MaxSearchSteps: 16, CornerRounding: 0.25}
+	if s.Threshold > 0 {
+		ir.Threshold = float64(max(0.02, min(0.5, s.Threshold)))
+	}
+	if s.MaxSearchSteps > 0 {
+		ir.MaxSearchSteps = max(4, min(32, s.MaxSearchSteps))
+	}
+	if s.CornerRounding > 0 {
+		ir.CornerRounding = float64(min(1, s.CornerRounding))
+	}
+	return ir
+}
+
 // FXAAIR lowers FXAA into the bundle.postEffects[i] shape:
 //
 //	{kind: "fxaa"}
@@ -721,6 +754,8 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 			out = append(out, ir)
 		case FXAA:
 			out = append(out, FXAAIR{})
+		case SMAA:
+			out = append(out, ev.lower())
 		case Decals:
 			out = append(out, ev.lower())
 		case MotionBlur:

@@ -4343,8 +4343,8 @@
     return typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api || SCENE_WEBGL_RENDER_TRUTH_NOOP;
   }
 
-  function sceneWebGLDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webglRun(state, effect, i, ...rest) : rest[0]; }
-  function sceneWebGLDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
+  function sceneWebGLDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = effect.kind === "smaa" ? window.__gosx_scene3d_smaa_api : window.__gosx_scene3d_depthfx_api; return api ? api.webglRun(state, effect, i, ...rest) : rest[0]; } // decals, motion blur (depthfx.ts) and SMAA (smaa.ts)
+  function sceneWebGLDepthFxDispose(state: any) { window.__gosx_scene3d_smaa_api?.dispose(state); window.__gosx_scene3d_depthfx_api?.dispose(state); }
   // The WebGL2 post chain's tone mapping name to u_toneMapMode (no closure state).
   function scenePostToneMapMode(mode) {
     if (typeof mode === "string") {
@@ -4732,7 +4732,7 @@
           if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
           scratchFBO = null;
           currentWidth = sw;
-          currentHeight = sh;
+          currentHeight = sh; depthFx.width = sw; depthFx.height = sh; // the chain size SMAA reads
         }
           sceneWebGLSpecularTarget(gl, sceneFBO, selective && sceneFBO.hdrSupported);
 	        clearPostTextureBindings();

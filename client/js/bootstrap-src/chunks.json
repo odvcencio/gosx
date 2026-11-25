@@ -555,6 +555,14 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-smaa.js",
+      "sources": [
+        "../runtime/scene3d/smaa.ts",
+        "../runtime/scene3d/smaa-wgpu.ts",
+        "../runtime/scene3d/smaa-gl.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-model-preparation.js",
       "sources": [
         "../runtime/scene3d/model-preparation.ts"

@@ -115,6 +115,10 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 		effect: FXAA{},
 		wantIR: FXAAIR{},
 	},
+	"SMAA": {
+		effect: SMAA{Threshold: 0.0625, MaxSearchSteps: 24, CornerRounding: 0.5},
+		wantIR: SMAAIR{Threshold: 0.0625, MaxSearchSteps: 24, CornerRounding: 0.5},
+	},
 	"CustomPost": {
 		effect: CustomPost{
 			Name:  "flare-shield",

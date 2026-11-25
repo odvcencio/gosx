@@ -1839,7 +1839,7 @@
   // advertises only for scenes that declare them. It loads with the renderer
   // chunk; with no URL it settles at once and the renderer skips those passes.
   function sceneWithPostFXChunk(renderer: Promise<any>, kind: string, key: string) {
-    return Promise.all([renderer, ensureSceneGatedFeatureLoaded(kind, key, "").catch((): any => null)]).then((loaded: any[]) => loaded[0]);
+    return Promise.all([renderer, ensureSceneGatedFeatureLoaded(kind, key, "").catch((): any => null), ensureSceneGatedFeatureLoaded("smaa", "gosxScene3dSmaaUrl", "").catch((): any => null)]).then((loaded: any[]) => loaded[0]); // SMAA: advertised only when a scene lists it
   }
 
   async function ensurePreferredWebGPUBackend(props, capability) {
