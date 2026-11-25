@@ -155,6 +155,33 @@ func TestProbeNeedsDepthFX(t *testing.T) {
 	}
 }
 
+// Only a scene that lists an smaa effect fetches the SMAA chunk; FXAA and TAA
+// do not, and neither does a scene with no post chain.
+func TestProbeNeedsSMAA(t *testing.T) {
+	cases := map[string]bool{
+		`{}`:                                false,
+		`{"postEffects":[{"kind":"fxaa"}]}`: false,
+		`{"postFX":[{"kind":"taa"}]}`:       false,
+		`{"postEffects":[{"kind":"smaa"}]}`: true,
+		`{"postFX":[{"kind":"toneMapping"},{"kind":"smaa"}]}`: true,
+		`{"scene":{"postEffects":[{"kind":"smaa"}]}}`:         true,
+		`{"postEffects":[null,7,{"kind":3}]}`:                 false,
+	}
+	for raw, want := range cases {
+		p := Decode(json.RawMessage(raw))
+		if p.Err != nil {
+			t.Fatalf("%s: decode: %v", raw, p.Err)
+		}
+		if got := p.NeedsSMAA(); got != want {
+			t.Errorf("%s: NeedsSMAA = %v, want %v", raw, got, want)
+		}
+	}
+	var nilProbe *Probe
+	if nilProbe.NeedsSMAA() {
+		t.Fatal("a nil probe needs no SMAA chunk")
+	}
+}
+
 // The terrain chunk serves Environment.Terrain, Environment.Wind and scatter
 // level-of-detail bands; the crowd chunk serves a non-empty Environment.Crowds.
 // Both props shapes count, and empty or null values do not.

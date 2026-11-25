@@ -821,6 +821,17 @@ var outputs = []output{
 		},
 	},
 	{
+		// The SMAA post effect (scene.SMAA), both backends. Loaded only for
+		// scenes whose post chain lists "smaa"; the renderers reach it through
+		// the depth-effect hook and window.__gosx_scene3d_smaa_api.
+		name: "bootstrap-feature-scene3d-smaa.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/smaa.ts"),
+			sourceFile("../runtime/scene3d/smaa-wgpu.ts"),
+			sourceFile("../runtime/scene3d/smaa-gl.ts"),
+		},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-model-preparation.js",
 		sources: []source{sourceFile("../runtime/scene3d/model-preparation.ts")},
 	},

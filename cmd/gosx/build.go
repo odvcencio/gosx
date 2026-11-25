@@ -84,6 +84,9 @@ var runtimeFeatureChunks = []struct{ name, role string }{
 	// Environment.Crowds (scene/crowd.go). The Scene3D mount fetches
 	// /gosx/bootstrap-feature-scene3d-crowd.js itself when a scene declares one.
 	{"scene3d-crowd", "scene3d"},
+	// The SMAA post effect (scene/postfx.go). The Scene3D renderers fetch
+	// /gosx/bootstrap-feature-scene3d-smaa.js when a scene's chain lists one.
+	{"scene3d-smaa", "scene3d"},
 }
 
 type wasmCompiler string

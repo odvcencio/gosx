@@ -321,6 +321,13 @@ func (p *Probe) NeedsWebGPUPostFX() bool {
 	return p != nil && (p.NeedsPostFX() || p.hasPostEffect("motionBlur") || p.Scene.NeedsWebGPUPostFX())
 }
 
+// NeedsSMAA reports whether the scene declares an smaa post effect in either
+// accepted props shape. Both renderers run SMAA from
+// bootstrap-feature-scene3d-smaa.js; no other scene fetches it.
+func (p *Probe) NeedsSMAA() bool {
+	return p != nil && (p.hasPostEffect("smaa") || p.Scene.NeedsSMAA())
+}
+
 // hasPostEffect reports whether this level's postEffects or postFX lists an
 // effect of one of kinds.
 func (p *Probe) hasPostEffect(kinds ...string) bool {

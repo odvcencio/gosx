@@ -4051,15 +4051,15 @@
     if (disabled || !last) return false;
     if (width !== canvasWidth || height !== canvasHeight) return false;
     if (format !== "rgba8unorm" && format !== "bgra8unorm" && format !== "rgba16float") return false;
-    if (kind === SCENE_POST_TONE_MAPPING || kind === SCENE_POST_COLOR_GRADE) return true;
+    if (kind === SCENE_POST_TONE_MAPPING || kind === SCENE_POST_COLOR_GRADE || kind === "smaa") return true; // SMAA's passes address whole pixels
     // Edge/UV-dependent effects require exactly representable pixel centres.
     return (kind === SCENE_POST_FXAA || kind === "taa" || kind === SCENE_POST_VIGNETTE) &&
       (width & (width - 1)) === 0 && (height & (height - 1)) === 0;
   }
 
   function wgpuPostOutput(direct: boolean, canvasOutput: any, intermediateOutput: any) { return direct ? canvasOutput : intermediateOutput; }
-  function wgpuDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = window.__gosx_scene3d_depthfx_api; return api ? api.webgpuRun(state, effect, i, ...rest) : rest[1]; }
-  function wgpuDepthFxDispose(state: any) { window.__gosx_scene3d_depthfx_api?.dispose(state); }
+  function wgpuDepthFxPass(state: any, effect: any, i: number, ...rest: any[]) { var api = effect.kind === "smaa" ? window.__gosx_scene3d_smaa_api : window.__gosx_scene3d_depthfx_api; return api ? api.webgpuRun(state, effect, i, ...rest) : rest[1]; } // decals, motion blur (depthfx.ts) and SMAA (smaa.ts)
+  function wgpuDepthFxDispose(state: any) { window.__gosx_scene3d_smaa_api?.dispose(state); window.__gosx_scene3d_depthfx_api?.dispose(state); }
   function wgpuPostPipelineName(name: string, canvasVariant: boolean) { return canvasVariant && name !== "present" ? "canvas-" + name : name; }
 
   function wgpuWarmPostOutputs(name: string, source: string, layout: any, canvasVariant: boolean, presentation: string, target: string, getPipeline: any) {

@@ -305,6 +305,26 @@ type FXAA struct{}
 
 func (FXAA) isPostEffect() {}
 
+// SMAA is morphological edge anti-aliasing with no frame history: it finds
+// colour edges, rebuilds the silhouette line each edge stair implies and blends
+// each edge pixel with its neighbour by the area that line covers. Long, nearly
+// horizontal or vertical edges (yard lines, numerals, thin bars) come out
+// smoother than with FXAA, and text and texture interiors stay sharp. It has no
+// history, so cuts and new objects never ghost; it cannot recover detail smaller
+// than a pixel (TAA can).
+//
+// Place it LAST, after Tonemap, instead of FXAA or TAA. It runs three passes
+// (edges, blend weights, blend) from its own on-demand chunk; a scene without
+// SMAA loads no SMAA code and runs no SMAA pass. FXAA stands in until the
+// chunk arrives. Zero fields take the defaults.
+type SMAA struct {
+	Threshold      float32 // luma edge threshold, 0.02..0.5 (default 0.1)
+	MaxSearchSteps int     // pixels searched each way along an edge, 4..32 (default 16)
+	CornerRounding float32 // share of the rounding kept at a sharp corner, 0..1 (default 0.25)
+}
+
+func (SMAA) isPostEffect() {}
+
 // TAA accumulates jittered frames with depth reprojection and neighborhood clamping.
 // Place one TAA last, replacing FXAA, and admit "taa" only on quality rungs with
 // frame headroom. WebGL2 needs float targets and a depth copy; other paths use
