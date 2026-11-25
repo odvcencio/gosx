@@ -15,19 +15,21 @@ import (
 // contains for the selectors these tests use.
 const fakeDOM = `(() => {
   const doc = {};
-  const one = /^([a-z]+)?(?:\.([\w-]+))?(?:\[([\w-]+)="((?:[^"\\]|\\.)*)"\])?(:not\(:disabled\))?$/i;
+  const one = /^([a-z]+)?(?:\.([\w-]+))?(?:\[([\w-]+)(?:="((?:[^"\\]|\\.)*)")?\])?(:not\(:disabled\)|:disabled)?$/i;
   const matches = (e, sel) => sel.split(',').some(s => {
     const m = one.exec(s.trim());
     if (!m) throw new Error('the fake document cannot match ' + s);
     if (m[1] && e.tagName !== m[1].toUpperCase()) return false;
     if (m[2] && !String(e.attrs.class || '').split(/\s+/).includes(m[2])) return false;
-    if (m[3] && e.getAttribute(m[3]) !== m[4].replace(/\\(.)/g, '$1')) return false;
-    if (m[5] && e.disabled) return false;
+    if (m[3] && m[4] === undefined && !e.hasAttribute(m[3])) return false;
+    if (m[3] && m[4] !== undefined && e.getAttribute(m[3]) !== m[4].replace(/\\(.)/g, '$1')) return false;
+    if (m[5] === ':not(:disabled)' && e.disabled) return false;
+    if (m[5] === ':disabled' && !e.disabled) return false;
     return true;
   });
   const below = root => { const out = []; const walk = e => { for (const c of e.children) { out.push(c); walk(c); } }; walk(root); return out; };
   const mk = (tag, attrs, width) => {
-    const el = {tagName: tag.toUpperCase(), attrs: Object.assign({}, attrs), disabled: false, offsetWidth: width, inert: false, children: [], parent: null, isConnected: true};
+    const el = {tagName: tag.toUpperCase(), attrs: Object.assign({}, attrs), disabled: false, offsetWidth: width, drawnWidth: width, inert: false, children: [], parent: null, isConnected: true};
     el.getAttribute = n => (n in el.attrs ? String(el.attrs[n]) : null);
     el.hasAttribute = n => n in el.attrs;
     el.focus = () => { if (!el.inert && !el.disabled && el.isConnected) doc.activeElement = el; };
@@ -35,6 +37,18 @@ const fakeDOM = `(() => {
     el.querySelectorAll = sel => below(el).filter(e => matches(e, sel));
     el.querySelector = sel => el.querySelectorAll(sel)[0] || null;
     el.closest = sel => { for (let e = el; e; e = e.parent) if (matches(e, sel)) return e; return null; };
+    Object.defineProperty(el, 'parentElement', {get: () => el.parent});
+    el.events = [];
+    el.dispatchEvent = ev => { el.events.push(ev.type); return true; };
+    // A click on a summary toggles its details, as a browser does: what the
+    // details holds is drawn while it is open and not drawn while it is shut.
+    el.click = () => {
+      el.events.push('click');
+      const d = el.parent;
+      if (el.tagName !== 'SUMMARY' || !d) return;
+      if (d.hasAttribute('open')) delete d.attrs.open; else d.attrs.open = '';
+      for (const c of d.children) if (c !== el) for (const e of [c, ...below(c)]) e.offsetWidth = d.hasAttribute('open') ? e.drawnWidth : 0;
+    };
     el.add = (...cs) => { for (const c of cs) { c.parent = el; el.children.push(c); } return el; };
     // clear takes every child away, as writing new markup does: a focus inside
     // falls to the body.
@@ -55,6 +69,7 @@ const fakeDOM = `(() => {
   doc.querySelector = sel => doc.body.querySelector(sel);
   doc.getElementById = id => doc.body.querySelector('[id="' + id + '"]');
   doc.mk = mk;
+  globalThis.getComputedStyle = e => ({overflowY: e.attrs.overflow || 'visible'});
   return doc;
 })()`
 
@@ -73,6 +88,7 @@ func newDOM(t *testing.T) dom {
 		if waiting != nil {
 			waiting.Cancel()
 		}
+		global.Delete("getComputedStyle")
 		if previous.IsUndefined() {
 			global.Delete("document")
 		} else {
