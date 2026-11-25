@@ -15,11 +15,11 @@ import (
 // contains for the selectors these tests use.
 const fakeDOM = `(() => {
   const doc = {};
-  const one = /^([a-z]+)?(?:\.([\w-]+))?(?:\[([\w-]+)(?:="((?:[^"\\]|\\.)*)")?\])?(:not\(:disabled\)|:disabled)?$/i;
+  const one = /^([a-z]+|\*)?(?:\.([\w-]+))?(?:\[([\w-]+)(?:="((?:[^"\\]|\\.)*)")?\])?(:not\(:disabled\)|:disabled)?$/i;
   const matches = (e, sel) => sel.split(',').some(s => {
     const m = one.exec(s.trim());
     if (!m) throw new Error('the fake document cannot match ' + s);
-    if (m[1] && e.tagName !== m[1].toUpperCase()) return false;
+    if (m[1] && m[1] !== '*' && e.tagName !== m[1].toUpperCase()) return false;
     if (m[2] && !String(e.attrs.class || '').split(/\s+/).includes(m[2])) return false;
     if (m[3] && m[4] === undefined && !e.hasAttribute(m[3])) return false;
     if (m[3] && m[4] !== undefined && e.getAttribute(m[3]) !== m[4].replace(/\\(.)/g, '$1')) return false;
@@ -29,7 +29,7 @@ const fakeDOM = `(() => {
   });
   const below = root => { const out = []; const walk = e => { for (const c of e.children) { out.push(c); walk(c); } }; walk(root); return out; };
   const mk = (tag, attrs, width) => {
-    const el = {tagName: tag.toUpperCase(), attrs: Object.assign({}, attrs), disabled: false, offsetWidth: width, drawnWidth: width, inert: false, children: [], parent: null, isConnected: true};
+    const el = {tagName: tag.toUpperCase(), attrs: Object.assign({}, attrs), disabled: false, offsetWidth: width, drawnWidth: width, inert: false, children: [], parent: null, isConnected: true, scrollTop: 0, scrollHeight: 0, clientHeight: 0};
     el.getAttribute = n => (n in el.attrs ? String(el.attrs[n]) : null);
     el.hasAttribute = n => n in el.attrs;
     el.focus = () => { if (!el.inert && !el.disabled && el.isConnected) doc.activeElement = el; };

@@ -179,27 +179,24 @@ func (s Scope) Accept() bool {
 	return Activate(stops[at], true)
 }
 
-// Scroll scrolls the nearest scrollable ancestor of the focused element,
-// or the scope's area (the open modal, or Root) when the focus is not inside
-// it or no ancestor scrolls, by dy CSS pixels, down for a positive dy. The
-// position stops at the ends of the scroller's range. It reports whether
-// anything moved, so a caller can tell the end of the content.
+// Scroll scrolls one scroller by dy CSS pixels, down for a positive dy. The
+// scroller is, in this order: the nearest scrolling ancestor of the focused
+// element inside the scope's area (the open modal, or Root); else the area
+// itself when it scrolls; else the first scrolling descendant of the area in
+// document order (a footer button beside a scrolling body is the common
+// case). When two descendants scroll, the first in document order is taken;
+// a page chooses another by focusing something inside it. The position stops
+// at the ends of the scroller's range. It reports whether anything moved, so
+// a caller can tell the end of the content, and moves nothing when nothing
+// in the area scrolls.
 func (s Scope) Scroll(dy float64) bool {
 	area := s.Area()
 	if !area.Valid() || dy == 0 || math.IsNaN(dy) {
 		return false
 	}
-	target := area
-	if active := browser.CurrentDocument().ActiveElement(); active.Valid() && area.Contains(active) {
-		for el := active.Parent(); el.Valid(); el = el.Parent() {
-			if scrolls(el) {
-				target = el
-				break
-			}
-			if el.Equal(area) {
-				break
-			}
-		}
+	target := scroller(area)
+	if !target.Valid() {
+		target = area
 	}
 	top := target.ScrollTop()
 	next := math.Max(0, math.Min(top+dy, target.ScrollRange()))
@@ -208,6 +205,31 @@ func (s Scope) Scroll(dy float64) bool {
 	}
 	target.SetScrollTop(next)
 	return true
+}
+
+// scroller finds the element Scroll moves, or an invalid element when none
+// of the area scrolls.
+func scroller(area browser.Element) browser.Element {
+	if active := browser.CurrentDocument().ActiveElement(); active.Valid() && area.Contains(active) {
+		for el := active.Parent(); el.Valid(); el = el.Parent() {
+			if scrolls(el) {
+				return el
+			}
+			if el.Equal(area) {
+				break
+			}
+		}
+	}
+	if scrolls(area) {
+		return area
+	}
+	all := area.QueryAll("*")
+	for i := 0; i < all.Len(); i++ {
+		if el := all.At(i); scrolls(el) {
+			return el
+		}
+	}
+	return browser.Element{}
 }
 
 // scrolls reports whether el is a scroller with content past its box.
