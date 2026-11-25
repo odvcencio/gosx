@@ -32,9 +32,10 @@ type EndAimLimits struct {
 // solved end position does not move.
 //
 // Without a target the result is the input local rotation, parentWorld^-1 *
-// endWorld. With one, a clip pose already outside the limits is pulled inside
-// them as soon as the weight is above zero, because the limits are measured
-// from the rest pose, not from the clip.
+// endWorld. With one, the aimed rotation is cut to the limits (measured from
+// the rest pose) and then blended in from the animated rotation by weight, so
+// the result is continuous in the weight and weight 0 is the animated pose
+// even if the clip lies outside the limits. The mid twist scales the same way.
 func AimEnd(endWorld, parentWorld, restLocal [4]float64, palmLocal, twistAxis, normal [3]float64, weight float64, limits EndAimLimits) (local [4]float64, midTwist float64) {
 	parentInv := quatConj(parentWorld)
 	local = quatMul(parentInv, endWorld)
@@ -47,7 +48,7 @@ func AimEnd(endWorld, parentWorld, restLocal [4]float64, palmLocal, twistAxis, n
 	}
 	axis := vecUnit(twistAxis)
 	palm := quatRotate(endWorld, palmLocal)
-	turn := quatFromTo(palm, normal, weight)
+	turn := quatFromTo(palm, normal, 1)
 	// L* = P^-1 D P L = P^-1 D H.
 	wanted := quatMul(parentInv, quatMul(turn, endWorld))
 	swing, twistAngle := splitSwingTwist(quatMul(wanted, quatConj(restLocal)), axis)
@@ -59,7 +60,11 @@ func AimEnd(endWorld, parentWorld, restLocal [4]float64, palmLocal, twistAxis, n
 	// The wanted end rotation is P * R(kept + midTwist) * swing * rest. The
 	// mid bone's twist already supplies R(midTwist) to the end bone's world
 	// rotation, so the end bone's own local rotation is R(kept) * swing * rest.
-	local = quatNormalize(quatMul(quatAxisAngle(axis, kept), quatMul(swing, restLocal)))
+	aimed := quatNormalize(quatMul(quatAxisAngle(axis, kept), quatMul(swing, restLocal)))
+	// The weight blends from the animated rotation to the aimed, clamped one,
+	// so weight 0 is the animated pose even when it lies outside the limits.
+	local = quatSlerpKeys(local, aimed, weight)
+	midTwist *= weight
 	return local, midTwist
 }
 
@@ -179,4 +184,22 @@ func splitSwingTwist(q [4]float64, axis [3]float64) (swing [4]float64, twist flo
 func swingTwistAngles(q [4]float64, axis [3]float64) (swing, twist float64) {
 	s, twist := splitSwingTwist(q, vecUnit(axis))
 	return quatAngle(s), twist
+}
+
+// quatSlerpKeys blends a toward b by t the way the browser does: normalized
+// lerp when the two are within about 36 degrees, slerp for wider gaps.
+func quatSlerpKeys(a, b [4]float64, t float64) [4]float64 {
+	dot := a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
+	if dot < 0 {
+		dot = -dot
+		b = [4]float64{-b[0], -b[1], -b[2], -b[3]}
+	}
+	w0, w1 := 1-t, t
+	if dot < 0.95 {
+		theta := math.Acos(dot)
+		sin := math.Sin(theta)
+		w0, w1 = math.Sin((1-t)*theta)/sin, math.Sin(t*theta)/sin
+		return [4]float64{a[0]*w0 + b[0]*w1, a[1]*w0 + b[1]*w1, a[2]*w0 + b[2]*w1, a[3]*w0 + b[3]*w1}
+	}
+	return quatNormalize([4]float64{a[0]*w0 + b[0]*w1, a[1]*w0 + b[1]*w1, a[2]*w0 + b[2]*w1, a[3]*w0 + b[3]*w1})
 }

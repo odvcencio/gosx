@@ -420,6 +420,27 @@ test("the end-aim step reproduces the Go reference cases", () => {
     near(Array.from(out).map((v) => v * sign), c.local, 1e-5, `${c.name} local`);
     near(mid, c.midTwist, 1e-5, `${c.name} mid twist`);
   }
+  // A pose outside the limits blends in from the animated rotation: the
+  // angle from the animated pose grows with the weight and is under 1 degree
+  // at 0.01.
+  const outside = cases.filter((c) => c.name.startsWith("outside-"));
+  assert.equal(outside.length, 4);
+  let last = -1;
+  for (const c of outside) {
+    const chain = {
+      palmL: Float64Array.from(c.palmLocal), axis: Float64Array.from(c.twistAxis), rest: Float64Array.from(c.restLocal),
+      restInv: Float64Array.from(quatConjT(c.restLocal)), swing: c.maxSwing, twist: c.maxTwist, forearm: c.forearmTwist,
+    };
+    const out = new Float64Array(4);
+    aimEnd(out, chain, Float64Array.from(c.endWorld), Float64Array.from(c.parentWorld), c.normal[0], c.normal[1], c.normal[2], c.weight);
+    const animated = quatMulT(quatConjT(c.parentWorld), c.endWorld);
+    const d = quatMulT(Array.from(out), quatConjT(animated));
+    const angle = 2 * Math.atan2(Math.hypot(d[0], d[1], d[2]), Math.abs(d[3]));
+    if (c.weight === 0) assert.ok(angle < 1e-9, "weight 0 is the animated pose");
+    if (c.weight === 0.01) assert.ok(angle * 180 / Math.PI < 1, `weight 0.01 moved ${angle * 180 / Math.PI} degrees`);
+    assert.ok(angle >= last - 1e-12, "monotone in the weight");
+    last = angle;
+  }
 });
 
 // A rolled arm (see rolledArm) with one IK chain on it. The clip turns the
@@ -464,9 +485,10 @@ test("a two-bone arm aims its palm after the reach and the wrist stays where the
   const facing = (scene) => quatRotT(worldQuat(scene.m, 3), palmLocal);
   assert.ok(angleT(facing(reach), normal) > 0.1, "without the aim the palm is off the normal");
   assert.ok(angleT(facing(aimed), normal) < 1e-4, `with the aim the palm meets the normal (off by ${angleT(facing(aimed), normal)})`);
-  // Half weight: half the turn.
+  // Half weight: the palm is between the unaimed and the aimed one.
   const half = aimScene(api, { palm, frameIk: [{ chain: 0, weight: 1, target, aim: { normal, weight: 0.5 } }] });
-  near(angleT(facing(half), normal), angleT(facing(reach), normal) / 2, 1e-4, "half weight turns half the angle");
+  const rest = angleT(facing(reach), normal), mid = angleT(facing(half), normal);
+  assert.ok(mid > 0.2 * rest && mid < 0.8 * rest, `half weight leaves the palm ${mid} rad off (unaimed ${rest})`);
   near(pos(half.m, 3), target, 1e-5, "half weight keeps the wrist");
 });
 

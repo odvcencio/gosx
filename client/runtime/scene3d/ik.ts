@@ -22,7 +22,7 @@
   const ikQ = new Float64Array(8);
   const ikP = new Float64Array(4);
   const ikTarget = new Float64Array(3);
-  const ikA = new Float64Array(8);
+  const ikA = new Float64Array(16);
   const ikH = new Float64Array(4);
   const ikO = new Float64Array(4);
 
@@ -170,15 +170,15 @@
   // (the Go reference is motion/animgraph AimEnd). H and P are the end bone's
   // and its parent's world rotations. The end bone's new local rotation goes
   // to out[0..4); the return value is the twist the mid bone takes about
-  // c.axis. The aim is the weight's share of the angle, cut to the chain's
-  // swing and twist limits measured from rest; twist beyond c.twist goes to
+  // c.axis. The aim is cut to the chain's swing and twist limits measured
+  // from rest, then blended in by weight; twist beyond c.twist goes to
   // the mid bone, up to c.forearm.
   function ikAimEnd(out: Float64Array, c: any, H: Float64Array, P: Float64Array, nx: number, ny: number, nz: number, weight: number) {
     const q = ikA, { palmL: l, axis: t, rest, restInv, swing, twist, forearm } = c;
     agQuatDelta(out, 0, P, 0, H, 0);
     if (!(weight > 0) || ikLen3(nx, ny, nz) < IK_EPS) return 0;
     ikRotateVec(ikV, H[0], H[1], H[2], H[3], l[0], l[1], l[2]);
-    ikFromTo(q, 0, ikV[0], ikV[1], ikV[2], nx, ny, nz, Math.min(weight, 1));
+    ikFromTo(q, 0, ikV[0], ikV[1], ikV[2], nx, ny, nz, 1);
     // The wanted turn from rest is P^-1 D H restL^-1, twist * swing about c.axis.
     agQuatMul(q, 0, q, 0, H, 0);
     agQuatDelta(q, 0, P, 0, q, 0);
@@ -195,9 +195,14 @@
     const kept = Math.max(-twist, Math.min(twist, turn));
     ikAxisQ(q, 4, t, kept);
     agQuatMul(q, 0, q, 0, rest, 0);
-    agQuatMul(out, 0, q, 4, q, 0);
-    agNormalizeQuat(out, 0);
-    return Math.max(-forearm, Math.min(forearm, turn - kept));
+    agQuatMul(q, 8, q, 4, q, 0);
+    agNormalizeQuat(q, 8);
+    // Weight blends from the animated rotation to the aimed, clamped one, so
+    // weight 0 is the animated pose even when it lies outside the limits.
+    const w = Math.min(weight, 1);
+    q[12] = out[0]; q[13] = out[1]; q[14] = out[2]; q[15] = out[3];
+    agSlerpKeys(out, q, 12, 8, w);
+    return w * Math.max(-forearm, Math.min(forearm, turn - kept));
   }
 
   // out[o..o+4) = rotation of angle a about the unit axis t.

@@ -391,6 +391,38 @@ func TestEndAimReference(t *testing.T) {
 	})
 }
 
+// outsideCase is a hand whose animated twist (0.9 rad) and swing lie well
+// past tight limits.
+func outsideCase(weight float64) aimCase {
+	r := lcg(99)
+	c := armCase(&r, "outside", EndAimLimits{MaxSwing: 0.1, MaxTwist: 0.05, ForearmTwist: 0.05}, weight)
+	c.EndWorld = quatMul(c.ParentWorld, quatMul(quatAxisAngle(c.TwistAxis, 0.9), c.RestLocal))
+	return c
+}
+
+func TestEndAimOutsideLimitsIsContinuousInTheWeight(t *testing.T) {
+	prevAngle, prevMid := -1.0, -1.0
+	for _, w := range []float64{0, 0.01, 0.5, 1} {
+		c := outsideCase(w)
+		c.run()
+		animated := quatMul(quatConj(c.ParentWorld), c.EndWorld)
+		angle := quatAngle(quatMul(c.Local, quatConj(animated)))
+		if w == 0 && angle > 1e-12 {
+			t.Fatalf("weight 0 moved the hand %g rad from the animated pose", angle)
+		}
+		if w == 0.01 && angle*180/math.Pi >= 1 {
+			t.Fatalf("weight 0.01 moved the hand %g degrees", angle*180/math.Pi)
+		}
+		if angle < prevAngle-1e-12 || math.Abs(c.MidTwist) < prevMid-1e-12 {
+			t.Fatalf("weight %g: angle %g (was %g), mid twist %g (was %g) is not monotone", w, angle, prevAngle, c.MidTwist, prevMid)
+		}
+		prevAngle, prevMid = angle, math.Abs(c.MidTwist)
+	}
+	if prevAngle < 0.3 {
+		t.Fatalf("the hand moved only %g rad at weight 1: the case does not exercise the limits", prevAngle)
+	}
+}
+
 func TestEndAimGolden(t *testing.T) {
 	r := lcg(11)
 	var cases []aimCase
@@ -408,11 +440,14 @@ func TestEndAimGolden(t *testing.T) {
 		c.run()
 		cases = append(cases, c)
 	}
-	// An animated pose already past the limits, which the step pulls in.
-	out := armCase(&r, "outside", EndAimLimits{MaxSwing: 0.1, MaxTwist: 0.05, ForearmTwist: 0.05}, 1)
-	out.EndWorld = quatMul(out.ParentWorld, quatMul(quatAxisAngle(out.TwistAxis, 0.9), out.RestLocal))
-	out.run()
-	cases = append(cases, out)
+	// An animated pose already past the limits, at four weights: the result
+	// blends from the animated rotation, so the weight never makes it jump.
+	for i, w := range []float64{0, 0.01, 0.5, 1} {
+		out := outsideCase(w)
+		out.Name = "outside-" + string(rune('a'+i))
+		out.run()
+		cases = append(cases, out)
+	}
 
 	data, err := json.MarshalIndent(cases, "", " ")
 	if err != nil {
