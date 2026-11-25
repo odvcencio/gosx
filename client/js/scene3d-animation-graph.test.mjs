@@ -27,10 +27,12 @@ export function loadChunk(extra = {}) {
     read("..", "runtime", "scene3d", "animation-rig.ts"),
     read("..", "runtime", "scene3d", "ik.ts"),
     read("..", "runtime", "scene3d", "animation-graph.ts"),
+    // Test-only: the end-aim step is not part of the chunk's public API.
+    "window.__gosx_test_ikAimEnd = ikAimEnd;",
     read("bootstrap-src", "26n-feature-scene3d-animation-graph-suffix.ts"),
   ].join("\n");
   vm.runInContext(transpile(source), context, { filename: "bootstrap-feature-scene3d-animation-graph.js" });
-  return { sandbox, context, api: sandbox.__gosx_scene3d_animation_graph_api };
+  return { sandbox, context, api: sandbox.__gosx_scene3d_animation_graph_api, aimEnd: sandbox.__gosx_test_ikAimEnd };
 }
 
 // --- GSA1 encoder mirroring motion/animgraph.FrameEncoder ---------------------
@@ -59,12 +61,13 @@ export function encodeFrame(models) {
     }
     u8((m.ik || []).length);
     for (const k of m.ik || []) {
-      const flags = (k.target ? 1 : 0) | (k.pole ? 2 : 0) | (k.ground ? 4 : 0) | (k.bone ? 8 : 0);
+      const flags = k.rawFlags ?? ((k.target ? 1 : 0) | (k.pole ? 2 : 0) | (k.ground ? 4 : 0) | (k.bone ? 8 : 0) | (k.aim ? 16 : 0));
       u8(k.chain); u8(flags); f32(k.weight);
       if (k.target) k.target.forEach(f32);
       if (k.pole) k.pole.forEach(f32);
       if (k.ground) { f32(k.ground.height); (k.ground.normal || [0, 1, 0]).forEach(f32); }
       if (k.bone) { u16(k.bone.model); u8(k.bone.index); (k.bone.offset || [0, 0, 0]).forEach(f32); }
+      if (k.aim) { k.aim.normal.forEach(f32); f32(k.aim.weight); }
     }
     u8((m.look || []).length);
     for (const k of m.look || []) { u8(k.chain); f32(k.weight); k.target.forEach(f32); }
@@ -194,6 +197,19 @@ test("decoder reads the Go encoder's golden frame", () => {
   assert.deepEqual(Array.from(m.look[0].target), [0, 1.5, 4]);
 });
 
+test("decoder reads a palm aim from the Go golden frame", () => {
+  const { api } = loadChunk();
+  const hex = fs.readFileSync(path.join(here, "..", "..", "motion", "animgraph", "testdata", "frame-aim.golden.hex"), "utf8").trim();
+  const frame = api.createDecoder()(Uint8Array.from(hex.match(/../g).map((h) => parseInt(h, 16))));
+  // The Go fixture (TestGoldenFrameWithAim): rightHand (chain 3) at weight 0.5
+  // with a target and a palm aim (0, 2, 0) at weight 0.5; the wire carries the
+  // unit normal and EndWeight x chain weight.
+  const ik = frame.models[0].ik[0];
+  assert.deepEqual([frame.models[0].ikCount, ik.chain, ik.flags, ik.weight], [1, 3, 17, 0.5]);
+  assert.deepEqual(Array.from(ik.target), [0.5, 1.25, 0.75]);
+  assert.deepEqual(Array.from(ik.aim), [0, 1, 0, 0.25]);
+});
+
 test("decoder reads root placements and placement-only models from the Go golden frame", () => {
   const { api } = loadChunk();
   const hex = fs.readFileSync(path.join(here, "..", "..", "motion", "animgraph", "testdata", "frame-root.golden.hex"), "utf8").trim();
@@ -237,6 +253,12 @@ test("decoder rejects malformed frames", () => {
   assert.throws(() => decode(encodeFrame([{ id: "a", root: [0, 0, Infinity, 0], ...base([]) }])), /non-finite/);
   assert.throws(() => decode(encodeFrame([{ id: "a", layers: Array.from({ length: 9 }, () => ({ weight: 1, samples: [] })) }])), /too many animation graph layers/);
   assert.throws(() => decode(encodeFrame([{ id: "a", ...base([{ name: "Bob", time: -1, weight: 1 }]) }])), /invalid animation graph sample/);
+  // IK flags use bits 0 to 4 (4 is the palm aim); bit 5 is not defined.
+  const aimed = decode(encodeFrame([{ id: "a", ...base([], { ik: [{ chain: 0, weight: 1, target: [0, 1, 0], aim: { normal: [0, 1, 0], weight: 0.5 } }] }) }]));
+  assert.equal(aimed.models[0].ik[0].flags, 17);
+  assert.deepEqual(Array.from(aimed.models[0].ik[0].aim), [0, 1, 0, 0.5]);
+  assert.throws(() => decode(encodeFrame([{ id: "a", ...base([], { ik: [{ chain: 0, weight: 1, rawFlags: 32 }] }) }])), /invalid animation graph IK entry/);
+  assert.throws(() => decode(encodeFrame([{ id: "a", ...base([], { ik: [{ chain: 0, weight: 1, rawFlags: 16 }] }) }])), /truncated|trailing|invalid/);
 });
 
 test("single sample poses the rig and resolves Blender action names", () => {
@@ -360,6 +382,155 @@ test("foot alignment tilts the foot to the ground normal", () => {
   api.evaluate(m, holder);
   const w = m.world, o = 4 * 16;
   near([w[o + 4], w[o + 5], w[o + 6]], n, 1e-5, "foot up axis");
+});
+
+// --- Aiming an end bone ------------------------------------------------------
+
+const quatMulT = (a, b) => [a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1], a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0], a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3], a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]];
+const quatConjT = (a) => [-a[0], -a[1], -a[2], a[3]];
+const quatAxisT = (axis, angle) => { const s = Math.sin(angle / 2), l = Math.hypot(...axis); return [axis[0] / l * s, axis[1] / l * s, axis[2] / l * s, Math.cos(angle / 2)]; };
+const quatRotT = (q, v) => { const p = quatMulT(quatMulT(q, [v[0], v[1], v[2], 0]), quatConjT(q)); return [p[0], p[1], p[2]]; };
+const angleT = (a, b) => Math.atan2(Math.hypot(a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]), a[0] * b[0] + a[1] * b[1] + a[2] * b[2]);
+// A world matrix's rotation as a quaternion (scale 1), read from its columns.
+const worldQuat = (m, node) => {
+  const w = m.world, o = node * 16;
+  const [m00, m10, m20, m01, m11, m21, m02, m12, m22] = [w[o], w[o + 1], w[o + 2], w[o + 4], w[o + 5], w[o + 6], w[o + 8], w[o + 9], w[o + 10]];
+  const tr = m00 + m11 + m22;
+  let q;
+  if (tr > 0) { const s = 0.5 / Math.sqrt(tr + 1); q = [(m21 - m12) * s, (m02 - m20) * s, (m10 - m01) * s, 0.25 / s]; }
+  else if (m00 > m11 && m00 > m22) { const s = 2 * Math.sqrt(1 + m00 - m11 - m22); q = [0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s]; }
+  else if (m11 > m22) { const s = 2 * Math.sqrt(1 + m11 - m00 - m22); q = [(m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s]; }
+  else { const s = 2 * Math.sqrt(1 + m22 - m00 - m11); q = [(m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s]; }
+  return q;
+};
+
+test("the end-aim step reproduces the Go reference cases", () => {
+  const { aimEnd } = loadChunk();
+  const cases = JSON.parse(fs.readFileSync(path.join(here, "..", "..", "motion", "animgraph", "testdata", "ik_end_aim.golden.json"), "utf8"));
+  assert.ok(cases.length >= 20);
+  for (const c of cases) {
+    const chain = {
+      palmL: Float64Array.from(c.palmLocal), axis: Float64Array.from(c.twistAxis), rest: Float64Array.from(c.restLocal),
+      restInv: Float64Array.from(quatConjT(c.restLocal)), swing: c.maxSwing, twist: c.maxTwist, forearm: c.forearmTwist,
+    };
+    const out = new Float64Array(4);
+    const mid = aimEnd(out, chain, Float64Array.from(c.endWorld), Float64Array.from(c.parentWorld), c.normal[0], c.normal[1], c.normal[2], c.weight);
+    // A quaternion and its negative are the same rotation.
+    const sign = out[0] * c.local[0] + out[1] * c.local[1] + out[2] * c.local[2] + out[3] * c.local[3] < 0 ? -1 : 1;
+    near(Array.from(out).map((v) => v * sign), c.local, 1e-5, `${c.name} local`);
+    near(mid, c.midTwist, 1e-5, `${c.name} mid twist`);
+  }
+  // A pose outside the limits blends in from the animated rotation: the
+  // angle from the animated pose grows with the weight and is under 1 degree
+  // at 0.01.
+  const outside = cases.filter((c) => c.name.startsWith("outside-"));
+  assert.equal(outside.length, 4);
+  let last = -1;
+  for (const c of outside) {
+    const chain = {
+      palmL: Float64Array.from(c.palmLocal), axis: Float64Array.from(c.twistAxis), rest: Float64Array.from(c.restLocal),
+      restInv: Float64Array.from(quatConjT(c.restLocal)), swing: c.maxSwing, twist: c.maxTwist, forearm: c.forearmTwist,
+    };
+    const out = new Float64Array(4);
+    aimEnd(out, chain, Float64Array.from(c.endWorld), Float64Array.from(c.parentWorld), c.normal[0], c.normal[1], c.normal[2], c.weight);
+    const animated = quatMulT(quatConjT(c.parentWorld), c.endWorld);
+    const d = quatMulT(Array.from(out), quatConjT(animated));
+    const angle = 2 * Math.atan2(Math.hypot(d[0], d[1], d[2]), Math.abs(d[3]));
+    if (c.weight === 0) assert.ok(angle < 1e-9, "weight 0 is the animated pose");
+    if (c.weight === 0.01) assert.ok(angle * 180 / Math.PI < 1, `weight 0.01 moved ${angle * 180 / Math.PI} degrees`);
+    assert.ok(angle >= last - 1e-12, "monotone in the weight");
+    last = angle;
+  }
+});
+
+// A rolled arm (see rolledArm) with one IK chain on it. The clip turns the
+// hand away from rest so the aim has something to undo.
+function aimScene(api, { roll = true, palm, swing = 3, twist = 3, forearm = 0, withPalm = true, wrist: wristTurn = 0.5, frameIk }) {
+  const arm = rolledArm(roll);
+  const rig = {
+    v: 1, humanoid: "auto", bones: {}, masks: [], layers: [{ name: "base", mask: -1, additive: false, refClip: "", refTime: 0 }],
+    ik: [{ name: "hand", root: "leftUpperArm", mid: "leftLowerArm", end: "leftHand", foot: false, align: false, ...(withPalm ? { palm, swing, twist, forearm } : {}) }],
+    lookAt: [], pelvis: { bone: "hips", maxDrop: 0 }, sources: [],
+  };
+  const hash = 31 + (withPalm ? 1 : 0);
+  api.defineRig(hash, JSON.stringify(rig));
+  const wrist = arm.mul(arm.nodes[3].rotation, arm.q(0, 0, 1, wristTurn));
+  const clipList = [{ name: "Wrist", duration: 1, channels: [{ targetNode: 3, property: "rotation", interpolation: "LINEAR", times: new Float32Array([0, 1]), values: new Float32Array([...arm.nodes[3].rotation, ...wrist]) }] }];
+  const record = { id: "x", nodes: arm.nodes, rootNodes: [0], skins: [], model: {}, rootTransform: null };
+  const m = api.createModel(record, clipList);
+  const holder = api.holder({}, "x");
+  const frame = api.createDecoder()(encodeFrame([{ id: "x", rigHash: hash, ...base([{ name: "Wrist", time: 1, weight: 1 }], { ik: frameIk }) }]));
+  holder.data = api.copyModel(holder.data, frame.models[0]);
+  holder.serial++;
+  api.evaluate(m, holder);
+  return { m, arm, holder };
+}
+
+test("a two-bone arm aims its palm after the reach and the wrist stays where the reach put it", () => {
+  const { api } = loadChunk();
+  const palm = [0, -1, 0];
+  // Where the hand is with no IK at all, then a reachable target near it.
+  const probe = aimScene(api, { palm, frameIk: [] });
+  const hand = pos(probe.m, 3);
+  const target = [hand[0] - 0.04, hand[1] + 0.05, hand[2] + 0.03];
+  const normal = quatRotT(quatAxisT([1, 1, 0.3], 0.9), [0, -1, 0]);
+  const reach = aimScene(api, { palm, frameIk: [{ chain: 0, weight: 1, target }] });
+  const aimed = aimScene(api, { palm, frameIk: [{ chain: 0, weight: 1, target, aim: { normal, weight: 1 } }] });
+  near(pos(reach.m, 3), target, 1e-5, "the reach lands on the target");
+  near(pos(aimed.m, 3), pos(reach.m, 3), 1e-5, "the aim leaves the wrist where the reach put it");
+  near(pos(aimed.m, 2), pos(reach.m, 2), 1e-5, "elbow unchanged");
+  // The palm in the hand's frame is the model-space palm at bind turned by
+  // the hand's rest rotation (rolls[3] is the hand's world rest rotation).
+  const palmLocal = quatRotT(quatConjT(aimed.arm.rolls[3]), palm);
+  const facing = (scene) => quatRotT(worldQuat(scene.m, 3), palmLocal);
+  assert.ok(angleT(facing(reach), normal) > 0.1, "without the aim the palm is off the normal");
+  assert.ok(angleT(facing(aimed), normal) < 1e-4, `with the aim the palm meets the normal (off by ${angleT(facing(aimed), normal)})`);
+  // Half weight: the palm is between the unaimed and the aimed one.
+  const half = aimScene(api, { palm, frameIk: [{ chain: 0, weight: 1, target, aim: { normal, weight: 0.5 } }] });
+  const rest = angleT(facing(reach), normal), mid = angleT(facing(half), normal);
+  assert.ok(mid > 0.2 * rest && mid < 0.8 * rest, `half weight leaves the palm ${mid} rad off (unaimed ${rest})`);
+  near(pos(half.m, 3), target, 1e-5, "half weight keeps the wrist");
+});
+
+test("twist beyond the end bone's limit goes into the forearm", () => {
+  const { api } = loadChunk();
+  // The chain axis (elbow to hand) is +X in world, and the palm is across it,
+  // so a turn about X is a pure twist. The end bone may take 0.2 rad, the
+  // forearm 0.5: a 0.5 rad request is 0.2 + 0.3.
+  const palm = [0, -1, 0];
+  const place = (frameIk) => aimScene(api, { roll: true, palm, swing: 3, twist: 0.2, forearm: 0.5, wrist: 0, frameIk });
+  const hand = pos(place([]).m, 3);
+  const normalFor = (turn) => quatRotT(quatAxisT([1, 0, 0], turn), [0, -1, 0]);
+  const reach = place([{ chain: 0, weight: 1, target: hand }]);
+  const aimed = place([{ chain: 0, weight: 1, target: hand, aim: { normal: normalFor(0.5), weight: 1 } }]);
+  const palmLocal = quatRotT(quatConjT(aimed.arm.rolls[3]), palm);
+  // The wrist is at rest, so the palm starts on the bind axis.
+  const facing = (scene) => quatRotT(worldQuat(scene.m, 3), palmLocal);
+  near(pos(aimed.m, 3), pos(reach.m, 3), 1e-5, "wrist stays");
+  // The forearm turned 0.3 rad about its own axis relative to the reach.
+  const midDelta = quatMulT(quatConjT(Array.from(reach.m.r.subarray(8, 12))), Array.from(aimed.m.r.subarray(8, 12)));
+  const turned = 2 * Math.atan2(Math.hypot(midDelta[0], midDelta[1], midDelta[2]), Math.abs(midDelta[3]));
+  near(turned, 0.3, 1e-4, "forearm twist");
+  near(angleT(facing(aimed), normalFor(0.5)), 0.2 + 0.3 - 0.5, 1e-4, "the palm meets the normal: 0.2 on the hand and 0.3 on the forearm");
+  // Nothing past the two limits: a 1.2 rad request gets 0.2 + 0.5.
+  const far = place([{ chain: 0, weight: 1, target: hand, aim: { normal: normalFor(1.2), weight: 1 } }]);
+  const farDelta = quatMulT(quatConjT(Array.from(reach.m.r.subarray(8, 12))), Array.from(far.m.r.subarray(8, 12)));
+  near(2 * Math.atan2(Math.hypot(farDelta[0], farDelta[1], farDelta[2]), Math.abs(farDelta[3])), 0.5, 1e-4, "forearm twist stops at its limit");
+});
+
+test("a frame without the aim poses the arm as before, with or without a palm in the rig", () => {
+  const { api } = loadChunk();
+  const palm = [0, -1, 0];
+  const probe = aimScene(api, { palm, withPalm: false, frameIk: [] });
+  const hand = pos(probe.m, 3);
+  const frameIk = [{ chain: 0, weight: 1, target: [hand[0] - 0.04, hand[1] + 0.05, hand[2] + 0.03] }];
+  const plain = aimScene(api, { palm, withPalm: false, frameIk });
+  const declared = aimScene(api, { palm, withPalm: true, frameIk });
+  assert.deepEqual(Array.from(declared.m.r), Array.from(plain.m.r), "rotations identical");
+  assert.deepEqual(Array.from(declared.m.world), Array.from(plain.m.world), "world matrices identical");
+  // A rig with no palm keys ignores an aim in the frame.
+  const ignored = aimScene(api, { palm, withPalm: false, frameIk: [{ ...frameIk[0], aim: { normal: [0, 0, 1], weight: 1 } }] });
+  assert.deepEqual(Array.from(ignored.m.world), Array.from(plain.m.world), "no palm declared: the aim is ignored");
 });
 
 test("look-at turns the head toward a target within the angle limit", () => {

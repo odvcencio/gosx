@@ -281,6 +281,19 @@ type TwoBoneIK struct {
 	AlignToGround bool
 	// WeightCurve names a clip curve that scales the chain weight each frame.
 	WeightCurve string
+	// PalmAxis is the direction the End bone's palm faces, in model space at
+	// the bind pose. A nonzero axis lets Instance.SetIKEndNormal aim the End
+	// bone after the reach; zero leaves the chain exactly as it was.
+	PalmAxis [3]float64
+	// MaxSwing is the most the aim may turn the End bone away from the chain
+	// axis, in radians from the rest pose.
+	MaxSwing float64
+	// MaxTwist is the most the aim may turn the End bone about the chain axis,
+	// in radians from the rest pose.
+	MaxTwist float64
+	// ForearmTwist is the most twist, in radians, the Mid bone takes when the
+	// palm needs more than MaxTwist.
+	ForearmTwist float64
 }
 
 // LookAt rotates a bone chain so the last bone's forward axis points at a
@@ -446,6 +459,7 @@ type condDef struct {
 type ikDef struct {
 	name        string
 	weightCurve int
+	palm        bool
 }
 
 type lookDef struct {
@@ -557,6 +571,10 @@ func (g Graph) Compile() (*Program, error) {
 		}
 		names[chain.Name] = true
 		def := ikDef{name: chain.Name, weightCurve: -1}
+		if err := checkPalm(chain); err != nil {
+			return nil, err
+		}
+		def.palm = chain.PalmAxis != [3]float64{}
 		if chain.WeightCurve != "" {
 			index, ok := p.curveIndex[chain.WeightCurve]
 			if !ok {
@@ -919,6 +937,27 @@ func (p *Program) ClipDuration(name string) float64 {
 		return p.clips[index].duration
 	}
 	return 0
+}
+
+// checkPalm validates the end-aim declaration of one chain.
+func checkPalm(chain TwoBoneIK) error {
+	limits := [3]float64{chain.MaxSwing, chain.MaxTwist, chain.ForearmTwist}
+	for _, v := range limits {
+		if !finite(v) || v < 0 {
+			return fmt.Errorf("animgraph: IK chain %q has a negative or non-finite palm limit", chain.Name)
+		}
+	}
+	if chain.PalmAxis == [3]float64{} {
+		if limits != [3]float64{} {
+			return fmt.Errorf("animgraph: IK chain %q sets palm limits without a PalmAxis", chain.Name)
+		}
+		return nil
+	}
+	a := chain.PalmAxis
+	if !finite3(a) || a[0]*a[0]+a[1]*a[1]+a[2]*a[2] < 1e-12 {
+		return fmt.Errorf("animgraph: IK chain %q has an invalid PalmAxis", chain.Name)
+	}
+	return nil
 }
 
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }

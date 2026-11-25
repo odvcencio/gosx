@@ -552,6 +552,9 @@ type decodedIK struct {
 	Other  int
 	Bone   int
 	Offset [3]float32
+	// EndNormal and EndWeight are the palm aim (flags bit 4).
+	EndNormal [3]float32
+	EndWeight float32
 }
 
 type decodedLook struct {
@@ -612,6 +615,10 @@ func decodeFrame(t *testing.T, b []byte) decodedFrame {
 			if ik.Flags&8 != 0 {
 				ik.Other, ik.Bone = u16(), int(u8())
 				ik.Offset = [3]float32{f32(), f32(), f32()}
+			}
+			if ik.Flags&16 != 0 {
+				ik.EndNormal = [3]float32{f32(), f32(), f32()}
+				ik.EndWeight = f32()
 			}
 			model.IK = append(model.IK, ik)
 		}

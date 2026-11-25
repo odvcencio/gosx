@@ -417,6 +417,51 @@ still lifts. With `Pelvis.MaxDrop`, the hips lower by the lowest foot's drop
 snaps. Raycast below `Feedback().AnimatedEnd(chain)`: it is the foot's
 position before IK in the frame just drawn.
 
+**Aiming an end bone.** A two-bone chain reaches with its end bone (a hand)
+but leaves that bone's rotation to the clip, so the palm faces wherever the
+clip's wrist keys leave it. To put a hand on a surface, declare which way the
+palm faces and send the direction it should face.
+
+1. Declare the palm in the graph, in model space at the bind pose, with its
+   limits in radians from the rest pose:
+
+   ```go
+   graph.IK = append(graph.IK, animgraph.TwoBoneIK{
+       Name: "rightHand", Root: "rightUpperArm", Mid: "rightLowerArm", End: "rightHand",
+       PalmAxis: [3]float64{0, -1, 0}, // the palm faces down at the bind pose
+       MaxSwing: 1.0,                   // the hand may tilt 1 rad off the forearm's line
+       MaxTwist: 0.6,                   // and turn 0.6 rad about it
+       ForearmTwist: 0.8,               // the forearm takes up to 0.8 rad more
+   })
+   ```
+
+2. Each frame, reach and aim:
+
+   ```go
+   hero.SetIKWeight(chain, 1)
+   hero.SetIKTarget(chain, wrist)
+   hero.SetIKEndNormal(chain, surfaceNormal, 1) // the world direction the palm should face
+   ```
+
+   `ClearIKEnd(chain)` stops the aim. The chain still needs something to
+   reach (a target, a bone target or ground), and the aim fades with the
+   chain's weight: `SetIKWeight`, its weight curve and level of detail.
+
+The step runs after the reach, and after every layer including additive ones,
+so at weight 1 the aim overrides a wrist an additive layer shaped. A normal
+leaves the roll about it free. The weight scales the angle the palm turns
+toward the normal. `MaxSwing` and `MaxTwist` bound the end bone's turn from its
+rest pose (zero allows none). When the palm needs more twist than `MaxTwist`,
+the forearm (the mid bone) takes the rest, up to `ForearmTwist`; the turn is
+about an axis through the wrist, so the wrist does not move. A request past
+all three limits stops at them. A clip pose that already lies outside the
+limits is pulled inside as soon as the weight is above zero. Each hand
+declares its own `PalmAxis`; the limits are symmetric, so a mirrored hand
+needs no sign flips. The End bone must be a child of the Mid bone. A graph
+that declares no `PalmAxis` is unchanged: same rig JSON, same frame bytes.
+`animgraph.AimEnd` is the same step in Go, for tests and tools that pose a
+character without a browser.
+
 **Look-at and aim** (`LookAt`) turn a bone chain so the pivot's forward axis
 points at a target. Each bone takes its weight's share of the remaining turn
 and the last bone finishes it, so a spine, chest, neck and head chain turns
@@ -727,7 +772,9 @@ The frame layout is documented on `animgraph.FrameEncoder`. Two golden
 fixtures pin the encoder, and the browser decoder test reads the same bytes:
 `motion/animgraph/testdata/frame.golden.hex` (layers, IK, look-at) and
 `frame-root.golden.hex` (a root placement, a sampled layer and a
-placement-only model).
+placement-only model). `frame-aim.golden.hex` pins a frame with a palm aim,
+and `ik_end_aim.golden.json` holds the inputs and outputs of `AimEnd` that the
+browser step must reproduce.
 
 ### Limits
 
@@ -740,9 +787,10 @@ placement-only model).
 - **Morph targets.** Clip channels that animate morph weights (facial
   shapes) do not play through the graph; skeletal channels do. A model with
   morph targets keeps its default weights.
-- **Hand orientation.** Two-bone IK places the hand or foot; it does not
-  rotate the hand to match a target orientation (feet do align to the ground
-  normal).
+- **Hand orientation needs a declared palm.** Two-bone IK places the hand
+  or foot. To turn a hand to a surface, declare `PalmAxis` (see "Aiming an
+  end bone"); the aim is a direction, so the roll about it is free, and it
+  works only on chains that also reach. Feet align to the ground normal.
 - **Curves come from Go.** glTF has no standard float tracks, so declare
   `Clip.Curves` in the graph (for example IK weights keyed at the frames a
   foot is planted).

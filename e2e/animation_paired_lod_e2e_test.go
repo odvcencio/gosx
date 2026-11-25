@@ -76,6 +76,24 @@ func lodGraph(t *testing.T, glb []byte, extra func(*animgraph.Graph)) *animgraph
 	return p
 }
 
+// declarePalmProbe lets the right hand aim its palm and adds two chains that
+// only report positions. The page returns no rotation, so the test reads the
+// palm from two bones the hand carries: the thumb's metacarpal and the little
+// finger's proximal bone sit 7.5 cm apart across the palm (model +Z at the
+// bind pose), so the vector between their reported positions is the palm axis
+// the chain declares.
+func declarePalmProbe(g *animgraph.Graph) {
+	for i := range g.IK {
+		if g.IK[i].Name == "rightHand" {
+			g.IK[i].PalmAxis = [3]float64{0, 0, 1}
+			g.IK[i].MaxSwing, g.IK[i].MaxTwist, g.IK[i].ForearmTwist = 2, 1.5, 0.5
+		}
+	}
+	g.IK = append(g.IK,
+		animgraph.TwoBoneIK{Name: "probeThumb", Root: "rightUpperArm", Mid: "rightLowerArm", End: "rightThumbMetacarpal"},
+		animgraph.TwoBoneIK{Name: "probeLittle", Root: "rightUpperArm", Mid: "rightLowerArm", End: "rightLittleProximal"})
+}
+
 func TestAnimationPairedLODMascotOnTheGPU(t *testing.T) {
 	chrome := e2eChromePath(t)
 	root := e2eRepoRoot(t)
@@ -91,7 +109,7 @@ func TestAnimationPairedLODMascotOnTheGPU(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	playerProg := lodGraph(t, hero, nil)
+	playerProg := lodGraph(t, hero, declarePalmProbe)
 	mascotProg := lodGraph(t, hero, func(g *animgraph.Graph) {
 		g.Layers = append(g.Layers, animgraph.Layer{Name: "style", Additive: true, SyncLayer: "locomotion", Machine: animgraph.StateMachine{States: []animgraph.State{{Name: "Waddle", Clip: "Waddle"}}}})
 		g.Rig = animgraph.Rig{Humanoid: "rigify", Sources: []animgraph.ClipSource{{Src: "/mixamo-clips.glb"}}, BoneScale: map[string]float64{"head": 1.4}, KeepProportions: true}
@@ -310,6 +328,8 @@ func runPairedLODScript(t *testing.T, ctx context.Context, backend string, playe
 		dispatch(all)
 	}
 
+	checkPalmAim(t, defender, playerProg, func(models []*animgraph.Instance) { dispatch(models) })
+
 	move, err := animgraph.StartPaired(pair, attacker, defender, animgraph.PairStart{
 		Poses: [2]animgraph.Pose{{X: pairX - 1.3, Z: -1, Yaw: math.Pi / 2}, {X: pairX + 0.4, Z: -1, Yaw: -math.Pi / 2}},
 		Align: align, In: 1.0,
@@ -433,3 +453,86 @@ func runPairedLODScript(t *testing.T, ctx context.Context, backend string, playe
 }
 
 func sq(v float64) float64 { return v * v }
+
+// checkPalmAim reaches the defender's right hand to a point near where it
+// hangs, then aims its palm at a normal turned 0.6 rad from where the palm
+// faced, and checks from the page's reported positions that the wrist stayed
+// on the target and the palm axis (thumb side to little-finger side) now
+// points along the normal, within 3 degrees.
+func checkPalmAim(t *testing.T, in *animgraph.Instance, prog *animgraph.Program, dispatch func([]*animgraph.Instance)) {
+	t.Helper()
+	hand, thumb, little := prog.IKID("rightHand"), prog.IKID("probeThumb"), prog.IKID("probeLittle")
+	palm := func() [3]float64 {
+		f := in.Feedback()
+		return [3]float64{f.Solved[thumb][0] - f.Solved[little][0], f.Solved[thumb][1] - f.Solved[little][1], f.Solved[thumb][2] - f.Solved[little][2]}
+	}
+	settle := func() {
+		for i := 0; i < 4; i++ {
+			in.Step(frameStep)
+			dispatch([]*animgraph.Instance{in})
+		}
+	}
+	settle()
+	animated, ok := in.Feedback().AnimatedEnd(hand)
+	if !ok {
+		t.Fatal("no feedback for the defender's right hand")
+	}
+	target := [3]float64{animated[0] + 0.03, animated[1] + 0.04, animated[2] - 0.03}
+	in.SetIKWeight(hand, 1)
+	in.SetIKTarget(hand, target)
+	settle()
+	reachWrist, reachPalm := in.Feedback().Solved[hand], palm()
+	if d := dist3(reachWrist, target); d > 0.01 {
+		t.Fatalf("the reach alone missed its target by %.4f m", d)
+	}
+	// Turn the palm 0.6 rad about a horizontal axis that is not the forearm's.
+	axis := [3]float64{0.6, 0, 0.8}
+	n := rotateAbout(axis, 0.6, unit3(reachPalm))
+	in.SetIKEndNormal(hand, n, 1)
+	settle()
+	aimedWrist, aimedPalm := in.Feedback().Solved[hand], palm()
+	before := angleDeg(reachPalm, n)
+	after := angleDeg(aimedPalm, n)
+	t.Logf("palm aim: %.1f degrees off the normal before, %.2f after; the wrist moved %.5f m", before, after, dist3(aimedWrist, reachWrist))
+	if before < 20 {
+		t.Fatalf("the test normal is only %.1f degrees from the unaimed palm: it cannot show the aim", before)
+	}
+	if after > 3 {
+		t.Fatalf("the palm is %.2f degrees from the normal after the aim, want at most 3", after)
+	}
+	if d := dist3(aimedWrist, reachWrist); d > 0.002 {
+		t.Fatalf("the aim moved the wrist %.4f m from where the reach put it", d)
+	}
+	in.ClearIKEnd(hand)
+	in.SetIKWeight(hand, 0)
+	in.ClearIKTarget(hand)
+	settle()
+}
+
+func dist3(a, b [3]float64) float64 {
+	return math.Sqrt(sq(a[0]-b[0]) + sq(a[1]-b[1]) + sq(a[2]-b[2]))
+}
+
+func unit3(v [3]float64) [3]float64 {
+	l := math.Sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+	return [3]float64{v[0] / l, v[1] / l, v[2] / l}
+}
+
+func angleDeg(a, b [3]float64) float64 {
+	a, b = unit3(a), unit3(b)
+	cross := [3]float64{a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]}
+	return math.Atan2(math.Sqrt(cross[0]*cross[0]+cross[1]*cross[1]+cross[2]*cross[2]), a[0]*b[0]+a[1]*b[1]+a[2]*b[2]) * 180 / math.Pi
+}
+
+// rotateAbout turns v about a unit axis by angle (Rodrigues).
+func rotateAbout(axis [3]float64, angle float64, v [3]float64) [3]float64 {
+	axis = unit3(axis)
+	s, c := math.Sincos(angle)
+	dot := axis[0]*v[0] + axis[1]*v[1] + axis[2]*v[2]
+	cross := [3]float64{axis[1]*v[2] - axis[2]*v[1], axis[2]*v[0] - axis[0]*v[2], axis[0]*v[1] - axis[1]*v[0]}
+	return [3]float64{
+		v[0]*c + cross[0]*s + axis[0]*dot*(1-c),
+		v[1]*c + cross[1]*s + axis[1]*dot*(1-c),
+		v[2]*c + cross[2]*s + axis[2]*dot*(1-c),
+	}
+}
