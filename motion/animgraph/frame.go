@@ -33,9 +33,11 @@ const FrameMagic = "GSA2"
 //	            u16 clip name index, f32 time, f32 weight, u8 flags (bit 0 loop)
 //	    u8  IK count, then per chain:
 //	        u8 chain index, u8 flags (bit 0 target, 1 pole, 2 ground,
-//	        3 bone of another model), f32 weight
+//	        3 bone of another model, 4 palm aim), f32 weight
 //	        [f32 x3 target] [f32 x3 pole] [f32 height, f32 x3 normal]
 //	        [u16 model index in this frame, u8 HumanoidBones index, f32 x3 offset]
+//	        [f32 x3 palm normal, f32 palm weight]  (flags bit 4; the weight
+//	        is EndWeight x the chain weight)
 //	    u8  look-at count, then per chain:
 //	        u8 chain index, f32 weight, f32 x3 target
 type FrameEncoder struct {
@@ -94,7 +96,7 @@ func (e *FrameEncoder) Encode(models ...*Instance) ([]byte, error) {
 				}
 			}
 		}
-		size += len(in.ik)*(6+12+12+16+15) + len(in.look)*17
+		size += len(in.ik)*(6+12+12+16+15+16) + len(in.look)*17
 	}
 	if cap(e.out) < size {
 		e.out = make([]byte, 0, size)
@@ -188,6 +190,9 @@ func (e *FrameEncoder) appendModel(out []byte, in *Instance, models []*Instance)
 		if ik.HasGround {
 			flags |= 4
 		}
+		if ik.HasEnd && in.prog.ik[chain].palm {
+			flags |= 16
+		}
 		out = append(out, byte(chain), flags)
 		out = appendF32(out, w)
 		if ik.HasTarget {
@@ -204,6 +209,10 @@ func (e *FrameEncoder) appendModel(out []byte, in *Instance, models []*Instance)
 			out = binary.LittleEndian.AppendUint16(out, uint16(other))
 			out = append(out, byte(ik.TargetBone))
 			out = appendVec3(out, ik.TargetOffset)
+		}
+		if flags&16 != 0 {
+			out = appendVec3(out, ik.EndNormal)
+			out = appendF32(out, ik.EndWeight*w)
 		}
 		count++
 	}

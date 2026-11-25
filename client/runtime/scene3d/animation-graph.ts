@@ -293,7 +293,7 @@
           for (let s = 0; s < AG_MAX_SAMPLES; s++) layer.samples.push({ name: "", time: 0, weight: 0, loop: false });
           m.layers.push(layer);
         }
-        for (let k = 0; k < AG_MAX_IK; k++) m.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3), other: 0, bone: 0, offset: new Float64Array(3) });
+        for (let k = 0; k < AG_MAX_IK; k++) m.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3), other: 0, bone: 0, offset: new Float64Array(3), aim: new Float64Array(4) });
         for (let k = 0; k < AG_MAX_LOOK; k++) m.look.push({ chain: 0, weight: 0, target: new Float64Array(3) });
         frame.models[i] = m;
       }
@@ -359,7 +359,7 @@
         for (let k = 0; k < m.ikCount; k++) {
           const ik = m.ik[k];
           ik.chain = u8(); ik.flags = u8(); ik.weight = f();
-          if (ik.chain >= AG_MAX_IK || ik.flags > 15 || ik.weight < 0) throw new RangeError("invalid animation graph IK entry");
+          if (ik.chain >= AG_MAX_IK || ik.flags > 31 || ik.weight < 0) throw new RangeError("invalid animation graph IK entry");
           if (ik.flags & 1) { ik.target[0] = f(); ik.target[1] = f(); ik.target[2] = f(); }
           if (ik.flags & 2) { ik.pole[0] = f(); ik.pole[1] = f(); ik.pole[2] = f(); }
           if (ik.flags & 4) { ik.height = f(); ik.normal[0] = f(); ik.normal[1] = f(); ik.normal[2] = f(); }
@@ -370,6 +370,7 @@
             ik.offset[0] = f(); ik.offset[1] = f(); ik.offset[2] = f();
             if (ik.bone >= RIG_BONES.length) throw new RangeError("unknown animation graph target bone");
           }
+          if (ik.flags & 16) { ik.aim[0] = f(); ik.aim[1] = f(); ik.aim[2] = f(); ik.aim[3] = f(); }
         }
         m.lookCount = u8();
         if (m.lookCount > AG_MAX_LOOK) throw new RangeError("too many animation graph look-at entries");
@@ -413,7 +414,7 @@
         for (let s = 0; s < AG_MAX_SAMPLES; s++) layer.samples.push({ name: "", time: 0, weight: 0, loop: false, clip: -1 });
         dst.layers.push(layer);
       }
-      for (let k = 0; k < AG_MAX_IK; k++) dst.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3), otherID: "", bone: 0, offset: new Float64Array(3) });
+      for (let k = 0; k < AG_MAX_IK; k++) dst.ik.push({ chain: 0, flags: 0, weight: 0, target: new Float64Array(3), pole: new Float64Array(3), height: 0, normal: new Float64Array(3), otherID: "", bone: 0, offset: new Float64Array(3), aim: new Float64Array(4) });
       for (let k = 0; k < AG_MAX_LOOK; k++) dst.look.push({ chain: 0, weight: 0, target: new Float64Array(3) });
     }
     dst.rigHash = src.rigHash; dst.dt = src.dt; dst.detail = src.detail || 0;
@@ -435,6 +436,7 @@
       b.otherID = (a.flags & 8) && frame ? frame.models[a.other].id : "";
       b.bone = a.bone || 0;
       if (a.offset) b.offset.set(a.offset);
+      b.aim.set(a.aim);
     }
     dst.lookCount = src.lookCount;
     for (let k = 0; k < src.lookCount; k++) {

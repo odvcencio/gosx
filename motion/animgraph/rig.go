@@ -137,6 +137,23 @@ func rigJSON(g Graph) []byte {
 		b = strconv.AppendBool(b, chain.Foot)
 		b = append(b, `,"align":`...)
 		b = strconv.AppendBool(b, chain.Foot && chain.AlignToGround)
+		if chain.PalmAxis != [3]float64{} {
+			// Written only when set, so a graph without an aim keeps its
+			// rig JSON and hash.
+			palm := vecUnit(chain.PalmAxis)
+			b = append(b, `,"palm":[`...)
+			b = appendJSONNumber(b, palm[0])
+			b = append(b, ',')
+			b = appendJSONNumber(b, palm[1])
+			b = append(b, ',')
+			b = appendJSONNumber(b, palm[2])
+			b = append(b, `],"swing":`...)
+			b = appendJSONNumber(b, chain.MaxSwing)
+			b = append(b, `,"twist":`...)
+			b = appendJSONNumber(b, chain.MaxTwist)
+			b = append(b, `,"forearm":`...)
+			b = appendJSONNumber(b, chain.ForearmTwist)
+		}
 		b = append(b, '}')
 	}
 	b = append(b, `],"lookAt":[`...)

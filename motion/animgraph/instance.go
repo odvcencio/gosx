@@ -68,6 +68,12 @@ type IKInput struct {
 	GroundHeight float64
 	GroundNormal [3]float64
 	HasGround    bool
+	// EndNormal is the unit world direction the End bone's palm should face,
+	// EndWeight in [0, 1] how far to turn it, and HasEnd whether the aim is
+	// on. Only chains that declare a PalmAxis take it.
+	EndNormal [3]float64
+	EndWeight float64
+	HasEnd    bool
 }
 
 // LookInput is the per-frame input for one look-at chain.
@@ -471,6 +477,32 @@ func (in *Instance) SetIKPole(chain int, pos [3]float64) {
 func (in *Instance) ClearIKPole(chain int) {
 	if chain >= 0 && chain < len(in.ik) {
 		in.ik[chain].HasPole = false
+	}
+}
+
+// SetIKEndNormal aims the End bone's palm at a world direction after the
+// reach, with weight in [0, 1]. The direction need not be a unit vector; a
+// zero-length one, or one that is not finite, is ignored. The chain must
+// declare a PalmAxis and have a target (or ground or bone target) to reach,
+// and the aim fades with the chain's own weight. Inside the limits the chain
+// declares, the palm turns by the weight's share of the angle to the normal.
+func (in *Instance) SetIKEndNormal(chain int, n [3]float64, w float64) {
+	if chain < 0 || chain >= len(in.ik) || !in.prog.ik[chain].palm || !finite3(n) || !finite(w) {
+		return
+	}
+	length := math.Sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2])
+	if length < 1e-6 {
+		return
+	}
+	ik := &in.ik[chain]
+	ik.EndNormal = [3]float64{n[0] / length, n[1] / length, n[2] / length}
+	ik.EndWeight, ik.HasEnd = clamp01(w), true
+}
+
+// ClearIKEnd stops the palm aim of a chain.
+func (in *Instance) ClearIKEnd(chain int) {
+	if chain >= 0 && chain < len(in.ik) {
+		in.ik[chain].HasEnd = false
 	}
 }
 
