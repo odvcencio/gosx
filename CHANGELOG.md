@@ -6,6 +6,7 @@
 
 ### Breaking changes and migration
 
+- `game/focus`: `Scope.Accept` with no stop focused now gives the focus to the first stop and presses nothing; a second `Accept` presses it. Before, the first press clicked the first stop. A page that relied on the old press now needs one more confirm.
 - Look change for native preview images (#866): the headless device's lit path now follows the lit WGSL in `render/bundle/lit.go`. It shades with the inverse-transpose normal times the sign of the model determinant, so normals are right under non-uniform or mirrored transforms, and it discards fragments whose screen winding disagrees with that sign, so back faces no longer draw. A real GPU already discarded those fragments. Two golden images changed, `mat-opacity-alpha` and `mat-opacity-additive` in `scene/harness/testdata/matrix`: 3 of 6,144 pixels each, at the silhouette of a translucent sphere, where its back hemisphere used to blend. Unlit and shadow-depth drawing still fill both windings; the shadow WGSL discards by orientation and the headless shadow pass does not yet.
 
 ### Scene3D and Selena
@@ -28,6 +29,7 @@
 
 ### Game input
 
+- `game/focus`: Left and Right on a focused select or range input step its value (`input` then `change`) and leave the focus, and `Scope.NoStep` turns that off. `Scope.Scroll` and `ScrollDelta` let a stick scroll a dialog or table. `summary` joins `DefaultControls`, so a controller can open a `<details>` row. `browser.Element` gains `ScrollTop`, `SetScrollTop`, `ScrollRange` and `OverflowY`.
 - The capture clock (`game/loop`, build tag `gosx_capture`) now starts a film on a whole fixed step. When the host first takes the clock (`data-gosx-capture-step`), the share of a step the page had gathered on its own time is dropped (`game.Runtime.AlignStep`, `game.Clock.AlignStep`), so every granted frame of a take lies at the same share of a step (`Frame.Alpha`) on every page. Before, that share was whatever the page's own frames left, and it stayed for the whole take: two pages filming one seeded play drew every pose and camera up to a step apart (measured on a game page: two runs of one play, alpha 0.80 and 0.19, cameras apart by up to 0.36 yd on 109 of 240 frames). Giving the time back and taking it again aligns again. `TestCaptureClockStartsOnAStep`.
 - `actions.Ticks` hands a Map's edges to a fixed-step simulation: every press and release reaches exactly one step, in order, with the release's `Tapped`, `Canceled` and `HeldFor`; `Pulse` sends page commands to the next step; `actions.Flick` turns a stick into one-shot directions. The Map now resolves a release before the next press when a key is let go and pressed again between two frames, and a context leaving the stack with an action held releases it as canceled once.
 - `ActionDef.Repeat` and `State.Repeated` repeat a held button on the Map clock. `Map.SuppressHeld` withdraws every held input until it is let go; `Map.Neutral(Rest)` reports whether every input is at rest.

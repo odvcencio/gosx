@@ -1,7 +1,8 @@
 // Package focus moves the keyboard focus over a page's controls with a
 // gamepad, the way a console menu does: the D-pad walks the buttons and
 // menus on screen, A presses the one with the focus (or steps a menu to its
-// next choice, or a slider one step), and B goes back.
+// next choice, or a slider one step), Left and Right step a focused menu or
+// slider, a stick scrolls a long dialog (Scope.Scroll), and B goes back.
 //
 // The rules are plain functions over indexes (Walk, InRow, StepChoice,
 // StepRange) with native tests. Scope applies them to the page through

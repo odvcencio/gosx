@@ -750,6 +750,44 @@ func (e Element) ScrollNearest() {
 		e.value.Call("scrollIntoView", map[string]any{"block": "nearest"})
 	}
 }
+
+// ScrollTop is how far the element's content is scrolled up, in CSS pixels.
+func (e Element) ScrollTop() float64 {
+	if !e.Valid() {
+		return 0
+	}
+	return e.value.Get("scrollTop").Float()
+}
+
+// SetScrollTop scrolls the element's content to top CSS pixels. The browser
+// clamps it to the scrollable range.
+func (e Element) SetScrollTop(top float64) {
+	if e.Valid() {
+		e.value.Set("scrollTop", top)
+	}
+}
+
+// ScrollRange is how far the element's content can scroll: its scroll height
+// less its client height, never below 0. Reading it measures layout.
+func (e Element) ScrollRange() float64 {
+	if !e.Valid() {
+		return 0
+	}
+	return max(0, e.value.Get("scrollHeight").Float()-e.value.Get("clientHeight").Float())
+}
+
+// OverflowY is the element's computed overflow-y ("auto", "scroll", "hidden",
+// "visible", ...). Reading it measures style.
+func (e Element) OverflowY() string {
+	if !e.Valid() {
+		return ""
+	}
+	style := js.Global().Call("getComputedStyle", e.value)
+	if !style.Truthy() {
+		return ""
+	}
+	return style.Get("overflowY").String()
+}
 func (e Element) OptionCount() int {
 	if !e.Valid() {
 		return 0
