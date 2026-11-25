@@ -137,6 +137,10 @@ func (e Element) OffsetWidth() int                       { return 0 }
 func (e Element) Contains(Element) bool                  { return false }
 func (e Element) SetSelectionRange(int, int)             {}
 func (e Element) ScrollNearest()                         {}
+func (e Element) ScrollTop() float64                     { return 0 }
+func (e Element) SetScrollTop(float64)                   {}
+func (e Element) ScrollRange() float64                   { return 0 }
+func (e Element) OverflowY() string                      { return "" }
 func (e Element) OptionCount() int                       { return 0 }
 func (e Element) SelectedIndex() int                     { return -1 }
 func (e Element) SetSelectedIndex(int)                   {}

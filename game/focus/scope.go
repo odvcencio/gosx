@@ -1,6 +1,7 @@
 package focus
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -8,9 +9,10 @@ import (
 )
 
 // DefaultControls are the controls a Scope walks when it names none:
-// enabled buttons and menus. Text fields, sliders and links are left to the
-// keyboard and the pointer unless a Scope asks for them.
-const DefaultControls = "button:not(:disabled), select:not(:disabled)"
+// enabled buttons and menus, and the summary of a details row. Text fields,
+// sliders and links are left to the keyboard and the pointer unless a Scope
+// asks for them.
+const DefaultControls = "button:not(:disabled), select:not(:disabled), summary"
 
 // Scope is where a gamepad's focus may go on a page.
 type Scope struct {
@@ -29,6 +31,11 @@ type Scope struct {
 	Row, Member string
 	// NoWrap stops the walk at its ends instead of wrapping round.
 	NoWrap bool
+	// NoStep keeps Left and Right moving the focus off a menu or a slider, as
+	// they did before menus stepped.
+	// By default, on a focused select or range input they step its value
+	// (see Move) and leave the focus where it is.
+	NoStep bool
 }
 
 func (s Scope) modal() string {
@@ -85,10 +92,30 @@ func indexOf(els []browser.Element, el browser.Element) int {
 }
 
 // Move moves the focus one stop in direction d. Left and Right on a member
-// of a roving row move along the row, and stop at its ends. It reports
-// whether the press was used: false when there is nowhere to go.
+// of a roving row move along the row, and stop at its ends. Left and Right on
+// a focused menu (select) or slider (range input) step its value back or
+// forward by one choice or one step and leave the focus where it is, unless
+// NoStep is set; the value stops at its first and last choice and the press
+// is used there too. It reports whether the press was used: false when
+// there is nowhere to go.
 func (s Scope) Move(d Dir) bool {
 	active := browser.CurrentDocument().ActiveElement()
+	if !s.NoStep && (d == Left || d == Right) && s.Area().Contains(active) && !active.Disabled() {
+		delta := 1
+		if d == Left {
+			delta = -1
+		}
+		switch strings.ToUpper(active.TagName()) {
+		case "SELECT":
+			stepMenu(active, delta, false, true)
+			return true
+		case "INPUT":
+			if strings.EqualFold(active.Attr("type"), "range") {
+				stepSlider(active, delta, false, true)
+				return true
+			}
+		}
+	}
 	if s.Row != "" && (d == Left || d == Right) && s.Area().Contains(active) {
 		if used := s.moveInRow(active, d); used {
 			return true
@@ -135,15 +162,79 @@ func (s Scope) moveInRow(active browser.Element, d Dir) bool {
 	return true
 }
 
-// Accept presses the control with the focus, or the first stop when the
-// focus is on none, as Activate does. It reports whether there was one.
+// Accept presses the control with the focus, as Activate does. When the
+// focus is on none of the stops it gives the focus to the first stop and
+// presses nothing; the next Accept presses it. It reports whether it used
+// the press: false when there are no stops.
 func (s Scope) Accept() bool {
 	stops := s.Stops()
 	if len(stops) == 0 {
 		return false
 	}
-	el := stops[max(indexOf(stops, browser.CurrentDocument().ActiveElement()), 0)]
-	return Activate(el, true)
+	at := indexOf(stops, browser.CurrentDocument().ActiveElement())
+	if at < 0 {
+		stops[0].Focus()
+		return true
+	}
+	return Activate(stops[at], true)
+}
+
+// Scroll scrolls the nearest scrollable ancestor of the focused element,
+// or the scope's area (the open modal, or Root) when the focus is not inside
+// it or no ancestor scrolls, by dy CSS pixels, down for a positive dy. The
+// position stops at the ends of the scroller's range. It reports whether
+// anything moved, so a caller can tell the end of the content.
+func (s Scope) Scroll(dy float64) bool {
+	area := s.Area()
+	if !area.Valid() || dy == 0 || math.IsNaN(dy) {
+		return false
+	}
+	target := area
+	if active := browser.CurrentDocument().ActiveElement(); active.Valid() && area.Contains(active) {
+		for el := active.Parent(); el.Valid(); el = el.Parent() {
+			if scrolls(el) {
+				target = el
+				break
+			}
+			if el.Equal(area) {
+				break
+			}
+		}
+	}
+	top := target.ScrollTop()
+	next := math.Max(0, math.Min(top+dy, target.ScrollRange()))
+	if next == top {
+		return false
+	}
+	target.SetScrollTop(next)
+	return true
+}
+
+// scrolls reports whether el is a scroller with content past its box.
+func scrolls(el browser.Element) bool {
+	switch el.OverflowY() {
+	case "auto", "scroll":
+		return el.ScrollRange() > 0
+	}
+	return false
+}
+
+// ScrollDelta is the distance in CSS pixels that a stick held at deflection
+// (-1 to 1, positive down) scrolls in the given seconds, at speed pixels a
+// second when it is fully pushed. Deflections up to deadZone give 0; past
+// it the distance grows from 0 to the full speed, so a stick resting off
+// centre does not drift. Pass the result to Scope.Scroll.
+func ScrollDelta(deflection, seconds, speed, deadZone float64) float64 {
+	m := math.Abs(deflection)
+	if m <= deadZone || m == 0 || seconds <= 0 || deadZone >= 1 {
+		return 0
+	}
+	m = math.Min(m, 1)
+	d := (m - deadZone) / (1 - deadZone) * speed * seconds
+	if deflection < 0 {
+		return -d
+	}
+	return d
 }
 
 // Activate presses el as a controller's A does: a button is clicked, a menu
@@ -164,6 +255,8 @@ func Activate(el browser.Element, wrap bool) bool {
 			return StepSlider(el, 1, wrap)
 		}
 	}
+	// A click on a summary opens or shuts its details row, as it does for a
+	// pointer.
 	el.Click()
 	return true
 }
@@ -171,6 +264,13 @@ func Activate(el browser.Element, wrap bool) bool {
 // StepMenu moves a select menu delta enabled choices on, wrapping round,
 // and dispatches one bubbling change event when the choice changed.
 func StepMenu(el browser.Element, delta int) bool {
+	return stepMenu(el, delta, true, false)
+}
+
+// stepMenu is StepMenu. wrap false stops at the first and last enabled
+// choice; input true dispatches an input event before the change event, as
+// a person's pick does.
+func stepMenu(el browser.Element, delta int, wrap, input bool) bool {
 	options := el.QueryAll("option")
 	n := options.Len()
 	enabled := func(i int) bool {
@@ -179,10 +279,13 @@ func StepMenu(el browser.Element, delta int) bool {
 	}
 	at := el.SelectedIndex()
 	next := StepChoice(n, at, delta, enabled)
-	if next < 0 || next == at {
+	if next < 0 || next == at || (!wrap && (next-at)*delta < 0) {
 		return false
 	}
 	el.SetSelectedIndex(next)
+	if input {
+		el.Dispatch("input", true)
+	}
 	el.Dispatch("change", true)
 	return true
 }
@@ -192,6 +295,12 @@ func StepMenu(el browser.Element, delta int) bool {
 // step="any" moves a hundredth of the span), and dispatches one bubbling
 // change event when the value changed.
 func StepSlider(el browser.Element, delta int, wrap bool) bool {
+	return stepSlider(el, delta, wrap, false)
+}
+
+// stepSlider is StepSlider. input true dispatches an input event before the
+// change event, as a person's drag does.
+func stepSlider(el browser.Element, delta int, wrap, input bool) bool {
 	num := func(name string, def float64) float64 {
 		if v, err := strconv.ParseFloat(strings.TrimSpace(el.Attr(name)), 64); err == nil {
 			return v
@@ -211,6 +320,9 @@ func StepSlider(el browser.Element, delta int, wrap bool) bool {
 		return false
 	}
 	el.SetValue(strconv.FormatFloat(next, 'f', -1, 64))
+	if input {
+		el.Dispatch("input", true)
+	}
 	el.Dispatch("change", true)
 	return true
 }
