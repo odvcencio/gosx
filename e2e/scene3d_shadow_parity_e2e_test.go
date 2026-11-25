@@ -13,7 +13,8 @@
 // The shadow map is small (256), so one map texel is a few pixels: a
 // hard edge shows as a stair, a softened one as a ramp, and half a texel of
 // offset shows as more than a pixel. GOSX_SHADOW_EVIDENCE=<dir> keeps both
-// stills and a crop of the edge as PNG. Run on a GPU runner:
+// stills and a crop of the edge as PNG. It skips without a real GPU, like the other GPU
+// checks. Run on a GPU runner:
 //
 //	mac-gpu-run <checkout> env GOSX_WATER_E2E_REQUIRE_WEBGPU=1 go test -tags e2e -run TestShadowParity -timeout 600s ./e2e/
 package e2e
@@ -210,7 +211,7 @@ func shadowCrop(img image.Image) *image.NRGBA {
 
 func TestShadowParityOnTheGPU(t *testing.T) {
 	edges := map[string]shadowEdge{}
-	for _, backend := range []string{"webgl2", "webgpu"} {
+	for _, backend := range decalBackends(t) {
 		img, data := shadowParityShot(t, backend)
 		if dir := os.Getenv("GOSX_SHADOW_EVIDENCE"); dir != "" {
 			_ = os.MkdirAll(dir, 0o755)
