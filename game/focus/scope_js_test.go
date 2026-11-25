@@ -178,3 +178,64 @@ func TestConfirmWithNothingFocusedTakesTheFocusFirst(t *testing.T) {
 		t.Fatalf("second confirm: events = %q, want one click", events(first))
 	}
 }
+
+// scroller makes a div that scrolls: overflow auto, content scrollHeight tall in a
+// clientHeight box.
+func (d dom) scroller(parent js.Value, scrollHeight, clientHeight int) js.Value {
+	e := d.el(parent, "div", map[string]any{"overflow": "auto"}, 700)
+	e.Set("scrollHeight", scrollHeight)
+	e.Set("clientHeight", clientHeight)
+	e.Set("scrollTop", 0)
+	return e
+}
+
+func TestScrollTakesTheBodyBesideTheFocusedFooterButton(t *testing.T) {
+	d := newDOM(t)
+	dlg := d.el(none, "dialog", map[string]any{"open": ""}, 600)
+	d.el(dlg, "div", map[string]any{}, 600) // a head that does not scroll
+	body := d.scroller(dlg, 900, 300)
+	second := d.scroller(dlg, 700, 300)
+	foot := d.el(dlg, "div", map[string]any{"class": "foot"}, 600)
+	btn := d.el(foot, "button", map[string]any{"id": "close", "class": "primary"}, 40)
+	btn.Call("focus")
+	scope := Scope{} // a dialog is open, so it is the area
+	if !scope.Scroll(200) || body.Get("scrollTop").Float() != 200 {
+		t.Fatalf("body scrollTop = %v", body.Get("scrollTop"))
+	}
+	if !scope.Scroll(1000) || body.Get("scrollTop").Float() != 600 {
+		t.Fatalf("body must stop at its range: scrollTop = %v", body.Get("scrollTop"))
+	}
+	if scope.Scroll(10) {
+		t.Fatal("Scroll at the end of the first scroller reported a move")
+	}
+	if second.Get("scrollTop").Float() != 0 {
+		t.Fatal("a second scroller moved: the first in document order is taken")
+	}
+}
+
+func TestAScrollingAncestorIsStillPreferredToADescendant(t *testing.T) {
+	d := newDOM(t)
+	root, scope := d.root()
+	early := d.scroller(root, 800, 300) // first in document order, not an ancestor
+	panel := d.scroller(root, 800, 300)
+	btn := d.el(panel, "button", map[string]any{"id": "in"}, 40)
+	btn.Call("focus")
+	if !scope.Scroll(100) || panel.Get("scrollTop").Float() != 100 {
+		t.Fatalf("the ancestor did not scroll: %v", panel.Get("scrollTop"))
+	}
+	if early.Get("scrollTop").Float() != 0 {
+		t.Fatal("an earlier scroller moved though the focus has a scrolling ancestor")
+	}
+}
+
+func TestScrollWithNothingScrollableMovesNothing(t *testing.T) {
+	d := newDOM(t)
+	root, scope := d.root()
+	plain := d.el(root, "div", map[string]any{}, 600)
+	plain.Set("scrollTop", 0)
+	btn := d.el(plain, "button", map[string]any{"id": "b"}, 40)
+	btn.Call("focus")
+	if scope.Scroll(100) || plain.Get("scrollTop").Float() != 0 {
+		t.Fatal("Scroll moved or reported a move with nothing scrollable")
+	}
+}
