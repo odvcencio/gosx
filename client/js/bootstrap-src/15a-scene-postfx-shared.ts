@@ -26,19 +26,21 @@ function resolvePostFXFactor(maxPixels, canvasPixels) {
   return Math.sqrt(cap / canvasPixels);
 }
 
-// Resolve the scaled shadow map size given the light's requested size
-// and the scene's shadow pixel cap. Mirrors the resolvePostFXFactor
-// pattern but operates on a single shadow map's pixel count rather than
-// a canvas area.
+// Resolve the scaled shadow map size given the light's requested size, the
+// scene's shadow pixel cap and the light's cascade count. Both renderers call
+// it, so a scene gets one map size on either. Mirrors the resolvePostFXFactor
+// pattern but operates on a shadow map's pixel count rather than a canvas area.
 //
-//   shadowMaxPixels undefined/null/zero/negative → default 1024² cap
-//   shadowMaxPixels positive → explicit cap
+//   shadowMaxPixels undefined/null/zero/negative → default 1024² cap, per map
+//   shadowMaxPixels positive → the cap covers every cascade layer of the light,
+//     so each layer gets shadowMaxPixels / cascades (cascades defaults to 1)
 //   requestedSize² <= cap → return requestedSize unchanged
 //   requestedSize² > cap → scale down uniformly
-function resolveShadowSize(requestedSize, shadowMaxPixels) {
+function resolveShadowSize(requestedSize, shadowMaxPixels, cascades) {
   var size = Math.max(1, requestedSize | 0);
+  var layers = Math.max(1, cascades | 0);
   var cap = (typeof shadowMaxPixels === "number" && shadowMaxPixels > 0)
-    ? shadowMaxPixels
+    ? shadowMaxPixels / layers
     : 1048576; // ShadowMaxPixels1024 default
   var requestedPixels = size * size;
   if (requestedPixels <= cap) return size;

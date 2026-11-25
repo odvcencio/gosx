@@ -6531,7 +6531,7 @@
     var cascades = sceneWebGPUShadowCascadeCount(light, frame.camera);
     var size = Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024)));
     // The authored memory cap covers every cascade layer of the light.
-    size = resolveShadowSize(size, frame.maxPixels > 0 ? frame.maxPixels / cascades : frame.maxPixels);
+    size = resolveShadowSize(size, frame.maxPixels, cascades);
     var shadowSlot = drawState.shadowSlots[slot] = wgpuFitShadowSlot(wgpuEnsureShadowSlot(s.device, drawState.shadowSlots[slot], size, cascades, destroyRendererGPUResource), light, rawLightMatrix,
       { view: uniformState.scratchViewMatrix, camera: frame.camera, aspect: frame.aspect, bounds: bounds });
     var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);

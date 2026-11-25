@@ -67,7 +67,10 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
   // surface hook replaces (scene3d-selena-surface.test.js and the white-furnace e2e cover behavior).
   // Reviewed physical light model base: u_lightModel routes ambient and hemisphere light into the indirect term
   // (16a-scene-webgpu-lights.test.mjs covers the routing; the legacy model is the default and unchanged).
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "a67f95b9d116cfe23e2db619a7ec473472506c4ca71dbd553213cc84a07cfdc0");
+  // Reviewed shadow-comparison base: a scene with no shadow softness compares four centred taps, each the 2 by 2
+  // texels around it blended by bilinear weights (the comparison WebGPU's linear sampler makes), on the raw
+  // sampler; no sampler is added (scene3d-shadow-parity.test.js; e2e TestShadowParityOnTheGPU checks the pixels).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "fe5b980a69331984d06df44a705571fe95807b6b041ac6c4ad18686b21cf4256");
   const shader = c.sceneWebGLDetailFragment(base, true);
   const glWithUnits = units => ({ MAX_TEXTURE_IMAGE_UNITS: 1, getParameter: () => units });
   assert.match(c.scenePBRFragmentSourceForContext(glWithUnits(16), base), /#define GOSX_HDR_IBL 1/);
@@ -110,7 +113,9 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   // Reviewed shared BRDF base: multiscatter energy, the layered clear coat and the surface inputs a Selena
   // surface hook replaces (scene3d-selena-surface.test.js and the white-furnace e2e cover behavior).
   // Reviewed physical light model base: env.lightModel routes ambient and hemisphere light into the indirect term.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "1941f8f661cb9342008191f2466cd3d41599628363f992b98ac0589aa25f81bc");
+  // Reviewed shadow-comparison base: the no-softness path takes the four centred taps of kShadowHard4, the same
+  // taps the WebGL renderer takes (scene3d-shadow-parity.test.js).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "0b886f644acbfba4a08db7c340a7931927699436b48739f8d3397d2ac6a26d83");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);
