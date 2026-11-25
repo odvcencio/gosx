@@ -389,7 +389,8 @@
     for (const chain of Array.isArray(rig.ik) ? rig.ik : []) {
       const a = node(chain.root), b = node(chain.mid), c = node(chain.end);
       const valid = a >= 0 && b >= 0 && c >= 0 && m.parent[c] >= 0 && m.reached[a] && m.reached[b] && m.reached[c];
-      out.ik.push({ name: chain.name, a, b, c, foot: chain.foot === true, align: chain.align === true, valid, offset: 0, feedback: new Float64Array(9), input: null });
+      const palm = valid && Array.isArray(chain.palm) && chain.palm.length === 3 && m.parent[c] === b ? rigPalm(m, rest, chain, b, c) : null;
+      out.ik.push({ name: chain.name, a, b, c, foot: chain.foot === true, align: chain.align === true, valid, palm, offset: 0, feedback: new Float64Array(9), input: null });
     }
     for (const chain of Array.isArray(rig.lookAt) ? rig.lookAt : []) {
       const bones = (chain.bones || []).map(node);
@@ -433,6 +434,23 @@
     }
     if (Array.isArray(rig.sources) && rig.sources.length) agAttachSources(m, rig.sources, map);
     return out;
+  }
+
+  // Bind-time data for aiming a chain's end bone (see ikAimEnd): the palm axis
+  // and the chain axis (the end bone's direction in the mid bone's frame) in
+  // the end bone's frame, its rest rotation, and the limits. Null when the
+  // chain's end bone sits at the mid bone's origin.
+  function rigPalm(m: any, rest: any, chain: any, b: number, c: number) {
+    const node = m.nodes[c] || {}, tr = node.matrix && node.matrix.length === 16 ? [node.matrix[12], node.matrix[13], node.matrix[14]] : node.translation || [0, 0, 0];
+    const len = Math.hypot(tr[0], tr[1], tr[2]), pl = Math.hypot(chain.palm[0], chain.palm[1], chain.palm[2]);
+    if (!(len > 1e-9) || !(pl > 1e-9)) return null;
+    const palmL = new Float64Array(3), restL = new Float64Array(4), restInv = new Float64Array(4);
+    const qr = rest.rot.subarray(c * 4, c * 4 + 4);
+    ikRotateVec(palmL, -qr[0], -qr[1], -qr[2], qr[3], chain.palm[0] / pl, chain.palm[1] / pl, chain.palm[2] / pl);
+    agQuatDelta(restL, 0, rest.rot, b * 4, rest.rot, c * 4);
+    restInv.set([-restL[0], -restL[1], -restL[2], restL[3]]);
+    const limit = (v: any) => (Number(v) > 0 ? Number(v) : 0);
+    return { palmL, axis: new Float64Array([tr[0] / len, tr[1] / len, tr[2] / len]), rest: restL, restInv, swing: limit(chain.swing), twist: limit(chain.twist), forearm: limit(chain.forearm) };
   }
 
   // Level-of-detail classes: 1 for fingers, eyes and jaw; 2 for toes and for

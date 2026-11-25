@@ -22,6 +22,9 @@
   const ikQ = new Float64Array(8);
   const ikP = new Float64Array(4);
   const ikTarget = new Float64Array(3);
+  const ikA = new Float64Array(8);
+  const ikH = new Float64Array(4);
+  const ikO = new Float64Array(4);
 
   function ikRotateVec(out: Float64Array, qx: number, qy: number, qz: number, qw: number, x: number, y: number, z: number) {
     const tx = 2 * (qy * z - qz * y), ty = 2 * (qz * x - qx * z), tz = 2 * (qx * y - qy * x);
@@ -161,6 +164,65 @@
     ikFromTo(ikQ, 0, v[6] - v[3], v[7] - v[4], v[8] - v[5], cx - v[3], cy - v[4], cz - v[5], 1);
     ikRotateNode(m, b, ikQ, 0);
     ikRefresh(m, b);
+  }
+
+  // Turn an end bone's palm toward the world direction (nx, ny, nz) by weight
+  // (the Go reference is motion/animgraph AimEnd). H and P are the end bone's
+  // and its parent's world rotations. The end bone's new local rotation goes
+  // to out[0..4); the return value is the twist the mid bone takes about
+  // c.axis. The aim is the weight's share of the angle, cut to the chain's
+  // swing and twist limits measured from rest; twist beyond c.twist goes to
+  // the mid bone, up to c.forearm.
+  function ikAimEnd(out: Float64Array, c: any, H: Float64Array, P: Float64Array, nx: number, ny: number, nz: number, weight: number) {
+    const q = ikA, { palmL: l, axis: t, rest, restInv, swing, twist, forearm } = c;
+    agQuatDelta(out, 0, P, 0, H, 0);
+    if (!(weight > 0) || ikLen3(nx, ny, nz) < IK_EPS) return 0;
+    ikRotateVec(ikV, H[0], H[1], H[2], H[3], l[0], l[1], l[2]);
+    ikFromTo(q, 0, ikV[0], ikV[1], ikV[2], nx, ny, nz, Math.min(weight, 1));
+    // The wanted turn from rest is P^-1 D H restL^-1, twist * swing about c.axis.
+    agQuatMul(q, 0, q, 0, H, 0);
+    agQuatDelta(q, 0, P, 0, q, 0);
+    agQuatMul(q, 0, q, 0, restInv, 0);
+    agNormalizeQuat(q, 0);
+    const sign = q[3] < 0 ? -1 : 1, turn = 2 * Math.atan2(sign * (q[0] * t[0] + q[1] * t[1] + q[2] * t[2]), sign * q[3]);
+    ikAxisQ(q, 4, t, turn);
+    agQuatDelta(q, 0, q, 4, q, 0);
+    const sv = ikLen3(q[0], q[1], q[2]), side = q[3] < 0 ? -1 : 1;
+    if (2 * Math.atan2(sv, side * q[3]) > swing) {
+      const k = sv > 1e-12 ? side * Math.sin(swing / 2) / sv : 0;
+      q[0] *= k; q[1] *= k; q[2] *= k; q[3] = Math.cos(swing / 2);
+    }
+    const kept = Math.max(-twist, Math.min(twist, turn));
+    ikAxisQ(q, 4, t, kept);
+    agQuatMul(q, 0, q, 0, rest, 0);
+    agQuatMul(out, 0, q, 4, q, 0);
+    agNormalizeQuat(out, 0);
+    return Math.max(-forearm, Math.min(forearm, turn - kept));
+  }
+
+  // out[o..o+4) = rotation of angle a about the unit axis t.
+  function ikAxisQ(out: Float64Array, o: number, t: Float64Array, a: number) {
+    const s = Math.sin(a / 2);
+    out[o] = t[0] * s; out[o + 1] = t[1] * s; out[o + 2] = t[2] * s; out[o + 3] = Math.cos(a / 2);
+  }
+
+  // Aim the palm of chain c after its reach: turn the end bone and move the
+  // twist it cannot take into the mid bone. Both turns are about an axis
+  // through the wrist, so the solved end position stays where the reach put it.
+  function ikAimChain(m: any, c: any, aim: Float64Array) {
+    const o = ikO;
+    ikWorldRot(m.world, c.c * 16, ikH, 0);
+    ikWorldRot(m.world, c.b * 16, ikP, 0);
+    const mid = ikAimEnd(o, c.palm, ikH, ikP, aim[0], aim[1], aim[2], aim[3]);
+    for (let k = 0; k < 4; k++) m.r[c.c * 4 + k] = o[k];
+    m.flags[c.c] |= 2;
+    if (mid) {
+      ikAxisQ(o, 0, c.palm.axis, mid);
+      agQuatMul(m.r, c.b * 4, m.r, c.b * 4, o, 0);
+      agNormalizeQuat(m.r, c.b * 4);
+      m.flags[c.b] |= 2;
+    }
+    ikRefresh(m, c.b);
   }
 
   // Rotate a look-at chain so the pivot's forward axis points at target.
@@ -315,6 +377,7 @@
       }
       c.feedback[6] = t[0]; c.feedback[7] = t[1]; c.feedback[8] = t[2];
       ikTwoBone(m, c.a, c.b, c.c, t[0], t[1], t[2], e.flags & 2 ? e.pole : null, e.weight);
+      if (c.palm && (e.flags & 16) && e.aim[3] > 0) ikAimChain(m, c, e.aim);
     }
     for (let i = 0; i < looks.length; i++) {
       const c = looks[i];

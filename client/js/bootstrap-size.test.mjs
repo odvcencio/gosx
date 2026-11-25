@@ -2322,7 +2322,8 @@ const budgets = [
   // loads only on pages that require the "scene3d-animation-graph" feature,
   // and no renderer set includes it. Measured 44_905 / 16_338 / 15_088;
   // targets are the next 100 bytes.
-  { file: "bootstrap-feature-scene3d-animation-graph.js", raw: 45000, gzip: 16400, brotli: 15100 },
+  // 25 November 2026 (end-bone aim for two-bone chains: a palm normal, a weight, swing and twist limits, overflow into forearm twist): measured bootstrap-feature-scene3d-animation-graph.js raw 48287 / gzip 17497 / brotli 16164, up from 46279 / 16809 / 15527. Each target moves to the lowest value that keeps the measured size inside its hard limit (45000 -> 45987, 16400 -> 16473, 15100 -> 15140); the allowance rules are unchanged.
+  { file: "bootstrap-feature-scene3d-animation-graph.js", raw: 45987, gzip: 16473, brotli: 15140 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
