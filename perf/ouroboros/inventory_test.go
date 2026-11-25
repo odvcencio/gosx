@@ -518,6 +518,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		// Opt-in stadium and arena crowds (Environment.Crowds) in the lazy crowd chunk.
 		"__gosx_scene3d_crowd_api",
 		"__gosx_scene3d_depthfx_api", // Decals and motion blur, in the on-demand depthfx chunk.
+		"__gosx_scene3d_smaa_api",    // SMAA, in the on-demand smaa chunk.
 		// TAA, depth of field and auto exposure, in the per-backend postfx chunks.
 		"__gosx_scene3d_postfx_webgl_api", "__gosx_scene3d_postfx_webgpu_api",
 		// The WASM loader's readiness timeout, which now also bounds the runtime's wait for the Scene3D chunk.
