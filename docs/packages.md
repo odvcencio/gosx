@@ -161,7 +161,7 @@ Four nested modules keep heavy dependencies out of the core module: `editor`, `n
 | `game/boot/bootpage` | experimental | yes | Renders the server-side parts of the boot gate: preload links for the Go WASM module and its wasm_exec script, and a small JavaScript watchdog that runs before the framework scripts. |
 | `game/camera` | experimental | yes | Camera rigs, poses and a director for game cameras. |
 | `game/flow` | experimental | yes | Runs a game's top-level states (boot, title, lobby, play, pause, results) as a stack, and ties the stack to the simulation pause flag and to the input context stack. |
-| `game/focus` | experimental | yes | Moves the keyboard focus over a page's controls with a gamepad, the way a console menu does: the D-pad walks the buttons and menus on screen, A presses the one with the focus (or steps a menu to its next choice, or a slider one step), and B goes back. |
+| `game/focus` | experimental | yes | Moves the keyboard focus over a page's controls with a gamepad, the way a console menu does: the D-pad walks the buttons and menus on screen, A presses the one with the focus (or steps a menu to its next choice, or a slider one step), Left and Right step a focused menu or slider, a stick scrolls a long dialog (Scope.Scroll), and B goes back. |
 | `game/gamepad` | experimental | yes | Polls the browser Gamepad API and feeds the result into a game.Input's existing bindings. |
 | `game/host` | experimental | yes | Provides typed browser gamepad snapshots and animation-frame ownership without depending on game.Runtime, server hubs, or the compiler. |
 | `game/host/hosttest` | experimental | yes | Drives a page's gamepads from a native Go test. |
