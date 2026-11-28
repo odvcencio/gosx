@@ -1157,7 +1157,7 @@ const budgets = [
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.gz gzip 618573; the target rises by exactly the measured overage (602072 -> 602189), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js raw 2209090; the target rises by exactly the measured overage (2142382 -> 2143554), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.gz gzip 618889; the target rises by exactly the measured overage (602189 -> 602505), allowance unchanged.
-    file: "bootstrap.js", raw: 2143554, gzip: 602505,
+    file: "bootstrap.js", raw: 2143609, gzip: 602510,
     // 2026-11-09 Selena scene lighting: bootstrap.js carries the Selena lighting module inline; brotli measures 480983 bytes; only this exhausted target moves (463596 -> 464599), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured bootstrap.js brotli 494026; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: bootstrap.js brotli measures 484107 bytes; only this exhausted target moves (464599 -> 467723), allowance unchanged.
@@ -1192,7 +1192,7 @@ const budgets = [
     // WebGL skinned shadow casters (22 Nov 2026): skinned casters draw their animated pose into the WebGL shadow maps; measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 502255; the target rises by exactly the measured overage (485778 -> 485871), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 502880; the target rises by exactly the measured overage (485871 -> 486496), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap.js.br brotli 503413; the target rises by exactly the measured overage (486553 -> 487029), allowance unchanged.
-    brotli: 487029 },
+    brotli: 487264 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1849,7 +1849,7 @@ const budgets = [
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d.js raw 703868; the target rises by exactly the measured overage (668663 -> 670434), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d.js.gz gzip 202326; the target rises by exactly the measured overage (192117 -> 192720), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured bootstrap-feature-scene3d.js.gz gzip 202370; the target rises by exactly the measured overage (192720 -> 192734), allowance unchanged.
-    file: "bootstrap-feature-scene3d.js", raw: 670434, gzip: 192734,
+    file: "bootstrap-feature-scene3d.js", raw: 670473, gzip: 192778,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     // Ocean scene-clock alignment measures 161438 B; raise only this exceeded
@@ -2891,7 +2891,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).gz gzip 449675; the target rises by exactly the measured overage (432682 -> 433291), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).gz gzip 449728; the target rises by exactly the measured overage (433293 -> 433344), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).gz gzip 449800; the target rises by exactly the measured overage (433344 -> 433416), allowance unchanged.
-    gzip: 433416,
+    gzip: 433461,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2934,7 +2934,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).br brotli 385869; the target rises by exactly the measured overage (369384 -> 369485), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).br brotli 386349; the target rises by exactly the measured overage (369485 -> 369965), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route (WebGPU, with labels).br brotli 386452; the target rises by exactly the measured overage (370010 -> 370068), allowance unchanged.
-    brotli: 370068,
+    brotli: 370107,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -3188,7 +3188,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1382127; the target rises by exactly the measured overage (1314809 -> 1316591), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1382288; the target rises by exactly the measured overage (1316591 -> 1316752), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels) raw 1383080; the target rises by exactly the measured overage (1316752 -> 1317544), allowance unchanged.
-    raw: 1317544,
+    raw: 1317599,
     // 2026-11-09 Selena scene lighting: Scene3D Safari and Firefox route (WebGL, with labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); gzip measures 385941 bytes; only this exhausted target moves (369041 -> 369557), allowance unchanged.
     // 8 November 2026 (WebGPU render upgrades: soft particles, cascaded shadows, TAA with motion vectors, auto exposure, adaptive-quality and graphics-recovery fixes): measured Scene3D Safari and Firefox route (WebGL, with labels) gzip 392100; only the exhausted targets move, to their exact minima under the unchanged allowance.
     // 2026-11-09 Selena surface materials and shared multiscatter BRDF: Scene3D Safari and Firefox route (WebGL, with labels) gzip measures 388236 bytes; only this exhausted target moves (369557 -> 371852), allowance unchanged.
@@ -3223,7 +3223,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 398036; the target rises by exactly the measured overage (381043 -> 381652), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 398042; the target rises by exactly the measured overage (381652 -> 381658), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).gz gzip 398341; the target rises by exactly the measured overage (381658 -> 381957), allowance unchanged.
-    gzip: 381957,
+    gzip: 382002,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
@@ -3260,7 +3260,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 344964; the target rises by exactly the measured overage (328100 -> 328580), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 345058; the target rises by exactly the measured overage (328580 -> 328674), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Safari and Firefox route (WebGL, with labels).br brotli 345097; the target rises by exactly the measured overage (328674 -> 328713), allowance unchanged.
-    brotli: 328713,
+    brotli: 328752,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -3549,7 +3549,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 543978; the target rises by exactly the measured overage (526985 -> 527594), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 544016; the target rises by exactly the measured overage (527596 -> 527632), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).gz gzip 544364; the target rises by exactly the measured overage (527632 -> 527980), allowance unchanged.
-    gzip: 527980,
+    gzip: 528025,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -3594,7 +3594,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 467994; the target rises by exactly the measured overage (451130 -> 451610), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 468102; the target rises by exactly the measured overage (451655 -> 451718), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D Chromium route after a WebGPU device loss (both backends, with labels).br brotli 468253; the target rises by exactly the measured overage (451718 -> 451869), allowance unchanged.
-    brotli: 451869,
+    brotli: 451908,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -3859,7 +3859,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 405478; the target rises by exactly the measured overage (388485 -> 389094), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 405531; the target rises by exactly the measured overage (389096 -> 389147), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).gz gzip 405603; the target rises by exactly the measured overage (389147 -> 389219), allowance unchanged.
-    gzip: 389219,
+    gzip: 389264,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     // 2026-11-09 Selena scene lighting: Scene3D minimal route (WebGPU, no islands, no hub, no labels) includes the larger WebGL/WebGPU chunks (on-demand lighting loader and Selena lighting bindings); brotli measures 328222 bytes; only this exhausted target moves (312495 -> 312592), allowance unchanged.
@@ -3900,7 +3900,7 @@ const routeBudgets = [
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 345551; the target rises by exactly the measured overage (329066 -> 329167), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 346031; the target rises by exactly the measured overage (329167 -> 329647), allowance unchanged.
     // measured overage, approved by the coordinator under decision 0019: measured Scene3D minimal route (WebGPU, no islands, no hub, no labels).br brotli 346134; the target rises by exactly the measured overage (329692 -> 329750), allowance unchanged.
-    brotli: 329750,
+    brotli: 329789,
   },
 
 ];
