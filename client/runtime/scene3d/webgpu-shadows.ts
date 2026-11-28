@@ -57,9 +57,9 @@ const WGSL_SHADOW_UNIFORMS_STRUCT = [
 
 // WGSL_SHADOW_CASCADE_FNS samples one slot. It needs frame.viewMatrix for the
 // fragment's view depth. softness 0 is a 4-tap 1-texel PCF; softness > 0 runs
-// WebGL's 8-tap PCSS (blocker search, penumbra estimate, scaled PCF) with the
-// same constants, so both backends soften the same way.
+// WebGL's 8-tap PCSS. kShadowHard4 sums to zero; WebGL's copy has y turned over.
 const WGSL_SHADOW_CASCADE_FNS = [
+  "const kShadowHard4 = array<vec2f, 4>(vec2f(0.85, 0.35), vec2f(-0.85, -0.35), vec2f(-0.35, 0.85), vec2f(0.35, -0.85));",
   "const kShadowDisk8 = array<vec2f, 8>(",
   "    vec2f(-0.94201624, -0.39906216), vec2f(0.94558609, -0.76890725),",
   "    vec2f(-0.09418410, -0.92938870), vec2f(0.34495938, 0.29387760),",
@@ -100,7 +100,7 @@ const WGSL_SHADOW_CASCADE_FNS = [
   "    }",
   "    var lit = 0.0;",
   "    for (var i = 0u; i < taps; i = i + 1u) {",
-  "        lit = lit + textureSampleCompareLevel(map, samp, clamp(uv + kShadowDisk8[i] * texel * radius, vec2f(0.0), vec2f(1.0)), layer, receiver);",
+  "        lit = lit + textureSampleCompareLevel(map, samp, clamp(uv + select(kShadowHard4[i], kShadowDisk8[i], taps == 8u) * texel * radius, vec2f(0.0), vec2f(1.0)), layer, receiver);",
   "    }",
   "    return lit / f32(taps);",
   "}",

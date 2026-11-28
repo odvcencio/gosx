@@ -345,7 +345,25 @@
     // world-units) hint: when > 0 we do a blocker search, estimate the
     // penumbra from the receiver-to-blocker distance, and then PCF with a
     // filter radius scaled to the penumbra. When softness is 0 we skip the
-    // extra samples and just return a hard comparison.
+    // search and take the four compared taps below.
+    // The no-softness shadow does by hand what WebGPU's linear comparison sampler does, with no extra sampler (this
+    // program already declares 16, the WebGL2 minimum): each tap compares the 2 by 2 texels around it with the
+    // reference depth (lit when the reference is nearer, WebGPU's "less") and blends the four 0-or-1 results by the
+    // bilinear weights. Four taps are WebGPU's kShadowHard4 (webgpu-shadows.ts) with y turned over (t = ndc.y * 0.5 + 0.5 here).
+    "const vec2 kShadowHard4[4] = vec2[](vec2(0.85, -0.35), vec2(-0.85, 0.35), vec2(-0.35, -0.85), vec2(0.35, 0.85));",
+    "float shadowLit(highp sampler2DArray shadowMap, ivec2 texel, int layer, ivec2 last, float reference) {",
+    "    return reference < texelFetch(shadowMap, ivec3(clamp(texel, ivec2(0), last), layer), 0).r ? 1.0 : 0.0;",
+    "}",
+    "float shadowTap(highp sampler2DArray shadowMap, vec2 uv, int layer, float reference) {",
+    "    ivec2 size = textureSize(shadowMap, 0).xy;",
+    "    vec2 at = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(size) - 0.5;",
+    "    ivec2 t = ivec2(floor(at));",
+    "    vec2 f = at - vec2(t);",
+    "    ivec2 last = size - ivec2(1);",
+    "    return mix(mix(shadowLit(shadowMap, t, layer, last, reference), shadowLit(shadowMap, t + ivec2(1, 0), layer, last, reference), f.x),",
+    "               mix(shadowLit(shadowMap, t + ivec2(0, 1), layer, last, reference), shadowLit(shadowMap, t + ivec2(1, 1), layer, last, reference), f.x), f.y);",
+    "}",
+    "",
     "float shadowFactor(highp sampler2DArray shadowMap, int layer, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
     "    if (lightSpacePos.w <= 0.0) return 1.0;",
@@ -360,8 +378,9 @@
     "",
     // Hard-shadow fast path.
     "    if (softness <= 0.0001) {",
-    "        float depth = texture(shadowMap, vec3(projCoords.xy, float(layer))).r;",
-    "        return (receiverDepth - bias > depth) ? 0.0 : 1.0;",
+    "        float lit = 0.0;",
+    "        for (int i = 0; i < 4; i++) lit += shadowTap(shadowMap, projCoords.xy + kShadowHard4[i] * texelSize, layer, clamp(receiverDepth - bias, 0.0, 1.0));",
+    "        return lit * 0.25;",
     "    }",
     "",
     // --- Blocker search ---
@@ -8934,9 +8953,7 @@
             requestedCascades: isSpot
               ? 1
               : Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
-            shadowSize: resolveShadowSize(
-              Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
-              shadowMaxPixels),
+            requestedSize: Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
           });
         }
 
@@ -8950,6 +8967,7 @@
         for (var candIdx = 0; candIdx < shadowCandidates.length; candIdx++) {
           var candidate = shadowCandidates[candIdx];
           var effectiveCascades = negotiatedCounts[candIdx] | 0;
+          var candidateSize = resolveShadowSize(candidate.requestedSize, shadowMaxPixels, effectiveCascades);
 
           // Reallocate per-cascade resources whenever the budget or the
           // authored request changes the effective count. A zero effective
@@ -8957,7 +8975,7 @@
           // no depth passes, no advertised-but-unbindable cascade count.
           if (shadowSlots[candIdx] &&
               (effectiveCascades <= 0 ||
-               shadowSlots[candIdx].size !== candidate.shadowSize ||
+               shadowSlots[candIdx].size !== candidateSize ||
                shadowSlots[candIdx].numCascades !== effectiveCascades)) {
             disposeShadowSlot(gl, shadowSlots[candIdx]);
             shadowSlots[candIdx] = null;
@@ -8967,7 +8985,7 @@
             continue;
           }
           if (!shadowSlots[candIdx]) {
-            shadowSlots[candIdx] = createSceneShadowSlot(gl, candidate.shadowSize, effectiveCascades);
+            shadowSlots[candIdx] = createSceneShadowSlot(gl, candidateSize, effectiveCascades);
           }
 
           shadowLightIndices[candIdx] = candidate.lightIndex;

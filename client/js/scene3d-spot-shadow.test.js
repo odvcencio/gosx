@@ -227,7 +227,7 @@ test("WebGL and WebGPU receivers reject invalid perspective coordinates before s
   const webgl = read(path.join(runtimeRoot, "webgl.ts"));
   const webgpu = read(path.join(runtimeRoot, "webgpu.ts"));
   const glGuard = webgl.indexOf('"    if (lightSpacePos.w <= 0.0) return 1.0;"');
-  const glSample = webgl.indexOf('"        float depth = texture(shadowMap, vec3(projCoords.xy, float(layer))).r;"');
+  const glSample = webgl.indexOf("lit += shadowTap(shadowMap,");
   assert.ok(glGuard >= 0 && glGuard < glSample);
   assert.match(webgl, /u_receiveShadow && \(lightType == 1 \|\| lightType == 3\)/);
 
