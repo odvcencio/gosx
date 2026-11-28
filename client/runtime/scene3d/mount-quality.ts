@@ -254,20 +254,21 @@
   // so an HDR sky clips to white without it. The chain draws into a
   // single-sample target, so FXAA keeps the edges the canvas would have had.
   // With no tone mapping nothing needs the chain, and it empties: FXAA alone
-  // would leave the frame in linear light. A denied TAA becomes FXAA, like the
-  // survival tier. The kinds compared here are the ones normalizeScenePostEffect
+  // would leave the frame in linear light. A denied TAA or SMAA becomes FXAA, like the
+  // survival tier and the chunk-load fallback of SMAA. The kinds compared here are the ones normalizeScenePostEffect
   // writes and both renderers dispatch on with ===.
   function sceneAdaptivePostFXKept(source: any[]): any[] {
     const kept: any[] = [];
-    let tone = false, fxaa = false, taa = false;
+    let tone = false, fxaa = false, taa = false, smaa = false;
     for (let i = 0; i < source.length; i += 1) {
       const kind = source[i] && source[i].kind;
       if (kind === "toneMapping") tone = true;
       else if (kind === "fxaa") fxaa = true;
       else if (kind === "taa") taa = true;
+      else if (kind === "smaa") smaa = true;
       if (kind === "toneMapping" || kind === "fxaa" || kind === "decals") kept.push(source[i]); // decals are scene content, not polish
     }
-    if (tone && taa && !fxaa) kept.push({ kind: "fxaa" });
+    if (tone && (taa || smaa) && !fxaa) kept.push({ kind: "fxaa" });
     return tone ? kept : [];
   }
 
@@ -329,19 +330,20 @@
       if (running[i] && running[i].kind === "atmosphere" && running[i].haze) haze = true;
     }
     const source = sceneAdaptivePostFXSource(sceneState);
-    let tone = false, fxaa = false, taa = false, after = 0;
+    let tone = false, fxaa = false, taa = false, smaa = false, after = 0;
     for (let i = 0; i < source.length; i += 1) {
       const kind = source[i] && source[i].kind;
       if (kind === "toneMapping") tone = true;
       else if (kind === "fxaa") fxaa = true;
       else if (kind === "taa") taa = true;
+      else if (kind === "smaa") smaa = true;
       if (kind === "toneMapping" || kind === "fxaa") after += sceneAdaptivePostFXCost(source[i]);
     }
     // What the frame draws after suppression: the kept chain (see
     // sceneAdaptivePostFXKept), plus an FXAA pass if the renderer appends one.
     if (!tone) after = 0;
-    else if (taa && !fxaa) after += sceneAdaptivePostFXCost(sceneAdaptiveFXAAEffect);
-    const keptFXAA = tone && (fxaa || taa);
+    else if ((taa || smaa) && !fxaa) after += sceneAdaptivePostFXCost(sceneAdaptiveFXAAEffect);
+    const keptFXAA = tone && (fxaa || taa || smaa);
     // The haze pass stays under suppression, so the renderer's chain is not empty even when the kept chain is.
     if (!keptFXAA && !!renderer && typeof renderer.suppressedPostFXAddsFXAA === "function" && renderer.suppressedPostFXAddsFXAA(tone || haze) === true) {
       after += sceneAdaptivePostFXCost(sceneAdaptiveFXAAEffect);

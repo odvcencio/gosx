@@ -12,6 +12,9 @@ The page decides from each scene's initial props. An effect that a later
 `taa` draws as FXAA, `dof` passes the image through and auto exposure stays
 off. Declare the effect in the initial props to get it.
 
+When the adaptive quality governor suppresses post effects, a chain that keeps tone mapping also keeps
+its anti-aliasing: `taa` and `smaa` are dropped and one `fxaa` pass stands in for them, unless the chain already has `fxaa`.
+
 ## Temporal anti-aliasing
 
 Add a `taa` post effect to smooth thin edges, foliage and specular sparkle that

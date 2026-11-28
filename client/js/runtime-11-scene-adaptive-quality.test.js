@@ -95,6 +95,19 @@ test("Scene3D adaptive post-FX suppression turns a denied TAA into FXAA beside t
   assert.deepEqual(kinds(both.postEffects), ["fxaa", "toneMapping"], "an authored FXAA is not duplicated");
 });
 
+test("Scene3D adaptive post-FX suppression turns a denied SMAA into FXAA beside the kept tone mapping", () => {
+  const tone = { kind: "toneMapping" };
+  const effects = [{ kind: "bloom" }, tone, { kind: "smaa" }];
+  const { sceneState } = primeSuppressed(effects);
+  assert.deepEqual(kinds(sceneState.postEffects), ["toneMapping", "fxaa"], "SMAA is dropped; FXAA covers its edges");
+  assert.equal(sceneState.postEffects[0], tone);
+  assert.deepEqual(kinds(effects), ["bloom", "toneMapping", "smaa"], "the authored list stays whole");
+  assert.deepEqual(kinds(primeSuppressed([{ kind: "toneMapping" }, { kind: "smaa" }, { kind: "taa" }]).sceneState.postEffects), ["toneMapping", "fxaa"], "SMAA and TAA together give one FXAA");
+  assert.deepEqual(kinds(primeSuppressed([{ kind: "smaa" }, { kind: "fxaa" }, { kind: "toneMapping" }]).sceneState.postEffects), ["fxaa", "toneMapping"], "an authored FXAA is not duplicated");
+  assert.deepEqual(kinds(primeSuppressed([{ kind: "bloom" }, { kind: "toneMapping" }]).sceneState.postEffects), ["toneMapping"], "a chain with no anti-aliasing gains none");
+  assert.deepEqual(kinds(primeSuppressed([{ kind: "smaa" }, { kind: "bloom" }]).sceneState.postEffects), [], "without tone mapping the chain still empties");
+});
+
 test("Scene3D adaptive post-FX suppression sheds the whole chain when no tone mapping is authored", () => {
   for (const authored of [["ssao", "bloom", "fxaa"], ["fxaa"], ["taa", "fxaa"], ["bloom"]]) {
     const { sceneState, mount } = primeSuppressed(authored.map((kind) => ({ kind })));
